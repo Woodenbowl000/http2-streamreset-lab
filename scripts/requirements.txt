@@ -1,0 +1,2 @@
+# Host-side tooling for scripts/evaluate.py (the lab services themselves need no pip deps).
+matplotlib>=3.7

@@ -1,0 +1,120 @@
+# HTTP/2 Stream-Reset DoS lab — containerised, local-only.
+#
+#   docker compose up --build            # core demo (detect -> mitigate loop)
+#   docker compose --profile metrics up  # also start Prometheus + cAdvisor
+#
+# Core services (always up): victim, victim-exporter, guard, detector, dashboard.
+# Attack/load is launched on demand with ./scripts/scenario.sh (docker compose run).
+#
+# SAFETY: every service is on an internal bridge network. The victim is a pinned,
+# pre-patch, deliberately vulnerable Tomcat. Do not expose this stack to an
+# untrusted network.
+
+services:
+  victim:
+    build: ./victim
+    container_name: h2lab-victim
+    expose:
+      - "8080"
+    volumes:
+      - victim-logs:/usr/local/tomcat/logs
+    networks: [labnet]
+
+  victim-exporter:
+    build: ./victim/exporter
+    container_name: h2lab-victim-exporter
+    environment:
+      VICTIM_LOG_DIR: /victim-logs
+      EXPORTER_PORT: "9110"
+    volumes:
+      - victim-logs:/victim-logs:ro
+    expose:
+      - "9110"
+    networks: [labnet]
+    depends_on: [victim]
+
+  guard:
+    build: ./guard
+    container_name: h2lab-guard
+    environment:
+      VICTIM_HOST: victim
+      VICTIM_PORT: "8080"
+      GUARD_LISTEN_PORT: "8080"
+      GUARD_CONTROL_PORT: "9120"
+    ports:
+      - "8080:8080"        # published for manual curl/nghttp testing
+    expose:
+      - "9120"
+    networks: [labnet]
+    depends_on: [victim]
+
+  detector:
+    build: ./detection
+    container_name: h2lab-detector
+    environment:
+      VICTIM_EXPORTER_URL: http://victim-exporter:9110/metrics
+      GUARD_METRICS_URL: http://guard:9120/metrics
+      GUARD_BLOCKLIST_URL: http://guard:9120/blocklist
+      GUARD_BLOCK_URL: http://guard:9120/block
+      GUARD_CLEAR_URL: http://guard:9120/clear
+      POLL_INTERVAL: "1.0"
+      EWMA_ALPHA: "0.4"
+      RAPID_RESET_RATE_THRESHOLD: "50"
+      MISMATCH_RATIO_THRESHOLD: "3.0"
+      BLOCK_COOLDOWN: "60"
+      AUTO_MITIGATE: "false"
+    ports:
+      - "9130:9130"
+    networks: [labnet]
+    depends_on: [victim-exporter, guard]
+
+  dashboard:
+    build: ./dashboard
+    container_name: h2lab-dashboard
+    environment:
+      DETECTOR_URL: http://detector:9130
+      DASHBOARD_PORT: "8088"
+    ports:
+      - "8088:8088"
+    networks: [labnet]
+    depends_on: [detector]
+
+  # Launched on demand: docker compose run --rm attacker <mode> [opts]
+  attacker:
+    build: ./attacker
+    container_name: h2lab-attacker
+    networks: [labnet]
+    depends_on: [guard]
+    profiles: ["tools"]
+
+  # --- optional metrics stack (docker compose --profile metrics up) ---
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: h2lab-prometheus
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    networks: [labnet]
+    profiles: ["metrics"]
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: h2lab-cadvisor
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    ports:
+      - "8081:8080"
+    networks: [labnet]
+    profiles: ["metrics"]
+
+networks:
+  labnet:
+    driver: bridge
+
+volumes:
+  victim-logs:

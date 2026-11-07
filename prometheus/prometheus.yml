@@ -1,0 +1,23 @@
+# Prometheus scrape config for the HTTP/2 stream-reset DoS lab.
+# Stores time-series history for all lab components; the detector also reads the
+# victim exporter directly for its real-time control loop.
+global:
+  scrape_interval: 2s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: victim-exporter
+    static_configs:
+      - targets: ['victim-exporter:9110']
+
+  - job_name: guard
+    static_configs:
+      - targets: ['guard:9120']
+
+  - job_name: detector
+    static_configs:
+      - targets: ['detector:9130']
+
+  - job_name: cadvisor
+    static_configs:
+      - targets: ['cadvisor:8080']

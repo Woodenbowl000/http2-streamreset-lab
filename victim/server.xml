@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Victim Tomcat server configuration for the HTTP/2 Stream-Reset DoS lab.
+
+  Deliberately minimal and PINNED to a pre-patch Tomcat version (see Dockerfile)
+  so that CVE-2023-44487 (Rapid Reset) and CVE-2025-8671 (MadeYouReset) can be
+  reproduced in an isolated, local-only container. Do NOT expose this to any
+  untrusted network.
+
+  Key points:
+    * HTTP/2 is enabled over cleartext (h2c) on the single connector, so the
+      lab needs no TLS certificate handling. Real deployments use h2 over TLS;
+      the stream-reset behaviour under test is identical at the frame layer.
+    * maxConcurrentStreams is left at a modest value so the per-connection
+      stream cap (the Rapid-Reset-era mitigation) is visible in the metrics.
+-->
+<Server port="8005" shutdown="SHUTDOWN">
+  <Listener className="org.apache.catalina.startup.VersionLoggerListener" />
+  <Listener className="org.apache.catalina.core.AprLifecycleListener" SSLEngine="on" />
+  <Listener className="org.apache.catalina.core.JreMemoryLeakPreventionListener" />
+  <Listener className="org.apache.catalina.mbeans.GlobalResourcesLifecycleListener" />
+  <Listener className="org.apache.catalina.core.ThreadLocalLeakPreventionListener" />
+
+  <Service name="Catalina">
+
+    <!-- HTTP/1.1 connector with h2c upgrade enabled. -->
+    <Connector port="8080"
+               protocol="org.apache.coyote.http11.Http11NioProtocol"
+               connectionTimeout="20000"
+               maxThreads="200"
+               redirectPort="8443">
+      <!-- Enable HTTP/2 over cleartext (h2c). -->
+      <UpgradeProtocol className="org.apache.coyote.http2.Http2Protocol"
+                       maxConcurrentStreams="100"
+                       maxConcurrentStreamExecution="100"
+                       overheadCountFactor="-1"
+                       overheadResetFactor="0"
+                       overheadContinuationThreshold="0" />
+    </Connector>
+
+    <Engine name="Catalina" defaultHost="localhost">
+      <Host name="localhost" appBase="webapps"
+            unpackWARs="true" autoDeploy="true">
+        <Valve className="org.apache.catalina.valves.AccessLogValve"
+               directory="/usr/local/tomcat/logs"
+               prefix="access" suffix=".log"
+               pattern="%{yyyy-MM-dd'T'HH:mm:ss.SSS}t %h %r %s %D" />
+      </Host>
+    </Engine>
+  </Service>
+</Server>
