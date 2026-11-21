@@ -29,11 +29,19 @@
                connectionTimeout="20000"
                maxThreads="200"
                redirectPort="8443">
-      <!-- Enable HTTP/2 over cleartext (h2c). -->
+      <!-- Enable HTTP/2 over cleartext (h2c).
+           overheadCountFactor="0" DISABLES Tomcat's HTTP/2 overhead protection
+           (a value < 1 disables it), as this lab intends for reproducibility.
+           An earlier "-1" did NOT disable it, so the MadeYouReset crafted frames
+           tripped `ConnectionException: Too much overhead so the connection will
+           be closed` (a coarse connection-level defence) instead of the clean
+           per-stream RST_STREAM the attack relies on. overheadResetFactor="0"
+           likewise stops client RST_STREAM floods (Rapid Reset) from being
+           counted as overhead. See docs/MADEYOURESET.md. -->
       <UpgradeProtocol className="org.apache.coyote.http2.Http2Protocol"
                        maxConcurrentStreams="100"
                        maxConcurrentStreamExecution="100"
-                       overheadCountFactor="-1"
+                       overheadCountFactor="0"
                        overheadResetFactor="0"
                        overheadContinuationThreshold="0" />
     </Connector>

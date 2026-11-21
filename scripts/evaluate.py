@@ -69,50 +69,77 @@ def poller():
         time.sleep(0.5)
 
 
-def scenario(mode, duration, connections=6, path="/?ms=200"):
-    subprocess.run(
-        ["docker", "compose", "run", "--rm", "attacker", mode,
-         "--host", "guard", "--port", "8080", "--path", path,
-         "--duration", str(duration), "--connections", str(connections)],
-        cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
+def scenario(mode, duration, connections=6, path="/?ms=200", extra=None):
+    cmd = ["docker", "compose", "run", "--rm", "attacker", mode,
+           "--host", "guard", "--port", "8080", "--path", path,
+           "--duration", str(duration), "--connections", str(connections)]
+    if extra:
+        cmd += extra
+    subprocess.run(cmd, cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def mark(label):
     phases.append({"label": label, "start": round(time.time() - _t0, 2)})
 
 
-def main():
-    global _t0, _stop
-    print(">> resetting detector + clearing mitigation")
+def reset_clean():
+    """Clear history, smoothing, and mitigation so the next phase starts fresh."""
     post("/reset")
     post("/unmitigate")
     post("/mode", {"auto": False})
+    time.sleep(2)
+
+
+def main():
+    global _t0, _stop
+    print(">> resetting detector + clearing mitigation")
+    reset_clean()
 
     _t0 = time.time()
     th = threading.Thread(target=poller, daemon=True)
     th.start()
 
-    print(">> phase 1/3: idle baseline (12s)")
+    # ---- Baseline + legitimate load (both detection signals must stay calm) ----
+    print(">> phase 1: idle baseline (10s)")
     mark("idle")
-    time.sleep(12)
+    time.sleep(10)
 
-    print(">> phase 2/3: legitimate load spike (20s, 6 honest clients)")
+    print(">> phase 2: legitimate load spike (18s, 6 honest clients)")
     mark("legitimate load")
-    scenario("legit", 20, connections=6, path="/?ms=200")
+    scenario("legit", 18, connections=6, path="/?ms=200")
 
     print(">> gap (4s)")
     mark("idle")
     time.sleep(4)
 
-    print(">> phase 3/3: Rapid Reset attack (24s) with AUTO-MITIGATION enabled")
+    # ---- Rapid Reset: caught by the client reset-rate ----
+    print(">> phase 3: Rapid Reset attack (20s) with AUTO-MITIGATION")
     post("/mode", {"auto": True})
-    mark("attack + auto-mitigate")
-    scenario("rapid-reset", 24, connections=8, path="/?ms=0")
+    mark("Rapid Reset\n+ mitigate")
+    scenario("rapid-reset", 20, connections=8, path="/?ms=0")
+    post("/mode", {"auto": False})
 
-    print(">> cooldown (6s)")
+    print(">> recover (8s)")
     mark("recovered")
+    time.sleep(8)
+
+    # ---- MadeYouReset: INVISIBLE to reset-rate, caught by mismatch_ratio ----
+    print(">> clearing smoothing before MadeYouReset phase")
+    post("/reset")
+    post("/unmitigate")
+    mark("idle")
     time.sleep(6)
+
+    print(">> phase 4: MadeYouReset attack (20s, zero-increment) with AUTO-MITIGATION")
+    post("/mode", {"auto": True})
+    mark("MadeYouReset\n+ mitigate")
+    scenario("madeyoureset", 20, connections=3, path="/?ms=500",
+             extra=["--primitive", "zero-increment", "--gap", "0.006"])
+    post("/mode", {"auto": False})
+
+    print(">> recover (16s — let inflight drain)")
+    mark("recovered")
+    time.sleep(16)
 
     _stop = True
     th.join(timeout=2)
@@ -141,55 +168,83 @@ def plot():
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from matplotlib.patches import Patch
 
     ts = [s["t"] for s in samples]
     crr = [s["client_reset_rate"] for s in samples]
+    mmr = [max(s["mismatch_ratio"], 1e-3) for s in samples]  # >0 for log axis
     mit = [s["mitigation_active"] for s in samples]
 
     try:
-        thr = get_state()["thresholds"]["rapid_reset_rate"]
+        th = get_state()["thresholds"]
+        thr_rapid = th["rapid_reset_rate"]
+        thr_mis = th["mismatch_ratio"]
     except Exception:
-        thr = 50
+        thr_rapid, thr_mis = 50, 3.0
+
+    def band_color(label):
+        if label.startswith("Rapid Reset"):
+            return "#2d1416"
+        if label.startswith("MadeYouReset"):
+            return "#2a1030"
+        if label.startswith("legitimate"):
+            return "#132a33"
+        return "#12161c"
 
     plt.style.use("dark_background")
-    fig, ax = plt.subplots(figsize=(11, 5.2))
-    # Phase backgrounds — deliberately NOT green, so the green mitigation wash
-    # reads unambiguously as "defending".
-    colors = {
-        "idle": "#12161c", "legitimate load": "#132a33",
-        "attack + auto-mitigate": "#2d1416", "recovered": "#12161c",
-    }
+    fig, (axA, axB) = plt.subplots(2, 1, figsize=(12, 7.4), sharex=True)
     bounds = phases + [{"label": None, "start": ts[-1] if ts else 0}]
+
+    for ax in (axA, axB):
+        for i in range(len(phases)):
+            start, end = bounds[i]["start"], bounds[i + 1]["start"]
+            ax.axvspan(start, end, color=band_color(phases[i]["label"]), alpha=0.9, zorder=0)
+        # mitigation wash (green = defending)
+        first = True
+        for i in range(1, len(ts)):
+            if mit[i]:
+                ax.axvspan(ts[i - 1], ts[i], color="#2ea043", alpha=0.14, zorder=1,
+                           label="mitigation active" if first else None)
+                first = False
+
+    # phase labels across the top of the upper panel
     for i in range(len(phases)):
-        start = bounds[i]["start"]
-        end = bounds[i + 1]["start"]
-        ax.axvspan(start, end, color=colors.get(phases[i]["label"], "#12161c"), alpha=0.9, zorder=0)
-        ax.text((start + end) / 2, 0.94, phases[i]["label"], transform=ax.get_xaxis_transform(),
-                ha="center", va="top", fontsize=9, color="#c9d1d9",
-                bbox=dict(boxstyle="round,pad=0.25", fc="#00000066", ec="none"))
+        start, end = bounds[i]["start"], bounds[i + 1]["start"]
+        axA.text((start + end) / 2, 0.985, phases[i]["label"], transform=axA.get_xaxis_transform(),
+                 ha="center", va="top", fontsize=8, color="#c9d1d9",
+                 bbox=dict(boxstyle="round,pad=0.25", fc="#00000088", ec="none"))
 
-    ax.plot(ts, crr, color="#f85149", lw=2, label="client reset rate (/s)", zorder=3)
-    ax.axhline(thr, color="#8b949e", ls="--", lw=1.2, label=f"alert threshold ({thr}/s)", zorder=2)
+    # Panel A — Rapid Reset signal
+    axA.plot(ts, crr, color="#f85149", lw=2, label="client reset rate (/s)", zorder=3)
+    axA.axhline(thr_rapid, color="#8b949e", ls="--", lw=1.2,
+                label=f"Rapid Reset threshold ({thr_rapid}/s)", zorder=2)
+    axA.set_ylabel("client reset rate\n(resets/s)")
+    axA.set_ylim(bottom=0)
+    axA.set_title("HTTP/2 stream-reset DoS — one detector, two attacks, two signals",
+                  fontsize=13, color="#e6edf3")
+    axA.grid(True, color="#30363d", lw=0.5)
+    h, l = axA.get_legend_handles_labels()
+    axA.legend(dict(zip(l, h)).values(), dict(zip(l, h)).keys(),
+               loc="upper left", framealpha=0.35, fontsize=8.5)
 
-    # shade when mitigation is active
-    first = True
-    for i in range(1, len(ts)):
-        if mit[i]:
-            ax.axvspan(ts[i - 1], ts[i], color="#2ea043", alpha=0.12, zorder=1,
-                       label="mitigation active" if first else None)
-            first = False
+    # Panel B — MadeYouReset signal (log scale: the attack spans orders of magnitude)
+    axB.plot(ts, mmr, color="#d2a8ff", lw=2, label="mismatch ratio (inflight / open streams)", zorder=3)
+    axB.axhline(thr_mis, color="#8b949e", ls="--", lw=1.2,
+                label=f"MadeYouReset threshold ({thr_mis})", zorder=2)
+    axB.set_yscale("log")
+    axB.set_ylabel("mismatch ratio\n(log scale)")
+    axB.set_xlabel("time (s)")
+    axB.grid(True, which="both", color="#30363d", lw=0.5)
+    h, l = axB.get_legend_handles_labels()
+    axB.legend(dict(zip(l, h)).values(), dict(zip(l, h)).keys(),
+               loc="upper left", framealpha=0.35, fontsize=8.5)
 
-    ax.set_xlabel("time (s)")
-    ax.set_ylabel("client reset rate (resets/s)")
-    ax.set_title("HTTP/2 Rapid Reset — detection across idle, legitimate load, and attack",
-                 fontsize=12, color="#e6edf3")
-    ax.grid(True, color="#30363d", lw=0.5)
-    ax.set_xlim(0, ts[-1] if ts else 1)
-    ax.set_ylim(bottom=0)
-    handles, labels = ax.get_legend_handles_labels()
-    seen = dict(zip(labels, handles))
-    ax.legend(seen.values(), seen.keys(), loc="upper left", framealpha=0.3, fontsize=9)
+    axB.set_xlim(0, ts[-1] if ts else 1)
+    # annotate the key point: reset-rate is BLIND to MadeYouReset
+    for ph in phases:
+        if ph["label"].startswith("MadeYouReset"):
+            axA.annotate("reset-rate stays flat\n(blind to MadeYouReset)",
+                         xy=(ph["start"] + 10, max(crr) * 0.12 + 1),
+                         fontsize=8.5, color="#f0b72f", ha="center")
     fig.tight_layout()
     fig.savefig(OUT_PNG, dpi=140)
 

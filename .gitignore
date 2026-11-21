@@ -3,3 +3,8 @@ __pycache__/
 *.pyc
 victim/logs/
 docs/evaluation.csv
+
+# redundant packaged copy of this tree
+http2-streamreset-lab.zip
+__pycache__/
+*.pyc

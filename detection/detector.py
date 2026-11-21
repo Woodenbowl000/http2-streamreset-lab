@@ -72,6 +72,7 @@ _state = {
     "history": deque(maxlen=HISTORY),
 }
 _lock = threading.Lock()
+_reset_ewma = threading.Event()   # set by POST /reset to clear smoothing state
 
 
 def _get(url, timeout=2.0):
@@ -152,6 +153,12 @@ def poll_loop():
     ewma_mismatch = 0.0
     while True:
         t0 = time.time()
+        if _reset_ewma.is_set():
+            # drop smoothing + rate baselines so a new scenario starts clean
+            prev = None
+            prev_t = None
+            ewma_client = ewma_server = ewma_mismatch = 0.0
+            _reset_ewma.clear()
         vic = {}
         try:
             vic = parse_prom(_get(VICTIM_EXPORTER))
@@ -281,6 +288,7 @@ class API(BaseHTTPRequestHandler):
         elif self.path == "/reset":
             with _lock:
                 _state["history"].clear()
+            _reset_ewma.set()
             self._json(200, {"ok": True})
         else:
             self._json(404, {"error": "not found"})

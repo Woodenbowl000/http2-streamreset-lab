@@ -14,32 +14,41 @@ python3 scripts/evaluate.py      # writes docs/evaluation.csv and docs/evaluatio
 
 ## Scenarios
 
-1. **Idle baseline** — victim under no load. Establishes the resting reset rate.
+The run exercises **both** attacks against the same victim and detector:
+
+1. **Idle baseline** — victim under no load. Establishes the resting signals.
 2. **Legitimate load spike** — 6 honest HTTP/2 clients hammering the work
-   endpoint. This is the control: a real traffic burst that must *not* trip the
-   detector.
+   endpoint. This is the control: a real traffic burst that must *not* trip
+   either detector.
 3. **Rapid Reset attack** — 8 connections flooding `HEADERS`+`RST_STREAM`, with
-   **auto-mitigation enabled** so the full autonomous loop is exercised.
+   **auto-mitigation enabled**.
+4. **MadeYouReset attack** — 3 connections of crafted `WINDOW_UPDATE` (inc 0)
+   frames that make the server reset its own streams, with **auto-mitigation
+   enabled**.
 
 ## Result (representative run)
 
-| Scenario | Client reset rate (max) | Client reset rate (mean) | Alert |
+| Scenario | Client reset rate | Mismatch ratio | Alert |
 |---|---|---|---|
-| Idle baseline | 0.0 /s | 0.0 /s | NORMAL |
-| Legitimate load spike | 0.0 /s | 0.0 /s | NORMAL |
-| Rapid Reset attack | ~600 /s | ~96 /s | **RAPID_RESET** |
-| After auto-mitigation | ~0 /s | ~0 /s | NORMAL |
+| Idle baseline | 0 /s | ~0 | NORMAL |
+| Legitimate load spike | 0 /s | ~1 (below 3.0) | NORMAL |
+| Rapid Reset attack | ~600 /s | elevated | **RAPID_RESET** |
+| MadeYouReset attack | **0 /s** | >100 | **MADEYOURESET** |
+| After auto-mitigation | 0 /s | drains to ~0 | NORMAL |
 
 ![evaluation](evaluation.png)
 
-## Reading the plot
+## Reading the two-panel plot
 
-- Idle and legitimate-load phases sit flat on the x-axis: **honest traffic does
-  not reset streams**, so the client-reset-rate detector stays silent. This is
-  the direct answer to "does it just trip on any load spike?" — no.
-- The attack phase spikes an order of magnitude above the `50/s` threshold.
-- The green band is the window where mitigation was active; the rate collapses
-  back to zero once the attacking source is blocked at the guard.
+- **Top panel — client reset rate (Rapid Reset signal).** Flat during idle and
+  legitimate load, spikes an order of magnitude past the `50/s` threshold during
+  Rapid Reset, and — the key point — stays **flat at zero during MadeYouReset**.
+  Reset-rate monitoring is blind to the server-side attack.
+- **Bottom panel — mismatch ratio (MadeYouReset signal, log scale).** Sits near
+  `1` under legitimate load (safely below the `3.0` threshold), and crosses it
+  for **both** attacks — catching the MadeYouReset case the top panel misses.
+- The green wash marks where mitigation was active; after the attacking source
+  is blocked at the guard, each signal collapses back toward baseline.
 
 ## Choosing the threshold
 
@@ -47,6 +56,10 @@ Any value in the wide gap between the benign ceiling (~0/s here) and the attack
 floor (tens to hundreds /s) works. `50/s` is used as a safe default with large
 margin on both sides. On a noisier real workload you would set it a few × above
 the legitimate ceiling observed in scenario 2.
+
+The same logic picks the **mismatch-ratio** threshold: legitimate load holds the
+ratio near `1`, while MadeYouReset drives it past `100`, so `3.0` sits in a wide
+gap with a comfortable margin above the benign ceiling.
 
 ## Honest limitations
 

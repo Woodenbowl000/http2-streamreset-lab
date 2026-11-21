@@ -12,7 +12,7 @@ It covers two attacks in the same class:
 | CVE | CVE-2023-44487 (Oct 2023) | CVE-2025-8671 (Aug 2025) |
 | Who resets the stream | **client** floods `RST_STREAM` | **server** resets its own streams via crafted frames |
 | Caught by client reset-rate monitoring | yes | **no** — needs the backend mismatch-ratio metric |
-| Status in this lab | **fully working & verified** | research scaffold (Week-1 spike) |
+| Status in this lab | **fully working & verified** | **fully working & verified** |
 
 > ⚠️ **Authorized lab use only.** The victim is a pinned pre-patch Tomcat that
 > is *intentionally vulnerable*. Everything runs on an internal Docker bridge
@@ -31,10 +31,14 @@ its connection flood is cut and the victim keeps serving legitimate clients.
 
 ![evaluation](docs/evaluation.png)
 
-*Idle and a genuine legitimate load spike both keep the reset rate at ~0; only the
-attack crosses the threshold, and auto-mitigation knocks it back down. This plot
-is produced by `scripts/evaluate.py` and is the project's central evaluation
-artifact — it answers "does the detector just trip on any load spike?" with a no.*
+*One detector, two attacks, two signals. **Top:** the client reset rate spikes
+during Rapid Reset but stays flat during MadeYouReset — reset-rate monitoring is
+blind to it. **Bottom:** the backend mismatch ratio stays ~1 under a genuine
+legitimate load spike (below the threshold) and crosses it for **both** attacks,
+catching the MadeYouReset case the top panel misses. Auto-mitigation knocks each
+attack back down. Produced by `scripts/evaluate.py`; it answers "does the
+detector just trip on any load spike?" with a no, and shows why the backend
+metric is needed.*
 
 ---
 
@@ -67,7 +71,7 @@ artifact — it answers "does the detector just trip on any load spike?" with a 
 | **guard** | L4 (TCP) proxy in front of the victim and the **mitigation enforcement point**. Holds a source blocklist; on block it terminates the source's live connections *and* drops its reconnects. |
 | **detector** | Scrapes the exporter + guard every second, computes the EWMA-smoothed **client reset rate** (Rapid Reset) and **mismatch ratio** (MadeYouReset), raises an alert, and drives auto/manual mitigation. Exposes a JSON API. |
 | **dashboard** | Live web UI (`:8088`): alert banner, charts, and a **Mitigate** button + auto-mitigate toggle. |
-| **attacker** | Lab traffic generator: `rapid-reset`, `legit`, `idle`, and a `madeyoureset` research scaffold. Refuses non-lab targets. |
+| **attacker** | Lab traffic generator: `rapid-reset`, `legit`, `idle`, and `madeyoureset` (a raw-HTTP/2 crafted-frame engine that makes the server reset its own streams; supports `--probe` and three working primitives). Refuses non-lab targets. |
 | **prometheus / cadvisor** | Optional (`--profile metrics`) time-series history + container CPU/mem. |
 
 ---
@@ -84,8 +88,10 @@ docker compose up --build -d
 open http://localhost:8088        # (or just browse to it)
 
 # 3. in another terminal, run a scenario
-./scripts/scenario.sh legit          # legitimate load — detector stays calm
-./scripts/scenario.sh rapid-reset    # the attack — watch the alert fire
+./scripts/scenario.sh legit               # legitimate load — detector stays calm
+./scripts/scenario.sh rapid-reset         # client-reset flood — RAPID_RESET fires
+./scripts/scenario.sh madeyoureset-probe  # which crafted frames this Tomcat resets on
+./scripts/scenario.sh madeyoureset        # server resets its own streams — MADEYOURESET fires
 ```
 
 When the alert fires, click **Mitigate now** on the dashboard (or flip on
@@ -146,4 +152,18 @@ see `docs/EVALUATION.md`.
 ## Status
 
 - **Rapid Reset (CVE-2023-44487): complete and verified** — reproduce → detect → mitigate, with the evaluation plot.
-- **MadeYouReset (CVE-2025-8671): scaffolded** — victim is vulnerable, server-reset signal and mismatch-ratio pipeline are wired; the crafted-frame trigger is the open research task (per the proposal's Section 8 plan).
+- **MadeYouReset (CVE-2025-8671): complete and verified** — the attacker crafts
+  real spec-legal-but-invalid HTTP/2 frames that make Tomcat 10.1.43 reset its
+  own streams (three working primitives: zero-increment, window-overflow,
+  priority-length), the backend keeps running those reset streams (phantom
+  streams, confirmed against the access log), and the backend `mismatch_ratio`
+  detector raises `MADEYOURESET` while the client reset rate stays flat at zero.
+  Tier-1 mitigation knocks it down. See [`docs/MADEYOURESET.md`](docs/MADEYOURESET.md).
+
+Try it:
+
+```bash
+docker compose up --build -d
+./scripts/scenario.sh madeyoureset-probe     # which crafted frames this Tomcat resets on
+./scripts/scenario.sh madeyoureset 20 3      # sustained attack — dashboard flips to MADEYOURESET
+```
