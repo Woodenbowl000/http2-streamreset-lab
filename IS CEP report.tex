@@ -5,6 +5,8 @@
 \usepackage{hyperref}
 \usepackage{booktabs}
 \usepackage{graphicx}
+\usepackage{float}
+\usepackage{caption}
 \usepackage{amssymb}
 \usepackage{algorithm}
 \usepackage{algpseudocode}
@@ -46,6 +48,21 @@
 \let\WriteBookmarks\relax
 \def\floatpagepagefraction{1}
 \def\textpagefraction{.001}
+
+% --- Float placement: make LaTeX place figures/tables on pages instead of
+% deferring the many full-width (table*/figure*) floats to the end of the
+% document (which was pushing figures past the bibliography). The dbl*
+% parameters govern full-width floats in this two-column layout. ---
+\setcounter{topnumber}{4}
+\setcounter{bottomnumber}{3}
+\setcounter{totalnumber}{8}
+\setcounter{dbltopnumber}{4}
+\renewcommand{\topfraction}{0.95}
+\renewcommand{\bottomfraction}{0.85}
+\renewcommand{\textfraction}{0.05}
+\renewcommand{\floatpagefraction}{0.5}
+\renewcommand{\dbltopfraction}{0.95}
+\renewcommand{\dblfloatpagefraction}{0.5}
 
 \shorttitle{StreamShield: HTTP/2 stream-reset DoS detection and mitigation}
 \shortauthors{S. M. Rayyan et al.}
@@ -117,21 +134,23 @@ Rapid Reset is the direct form of the attack. On each stream the attacker sends 
 
 MadeYouReset reaches the same exhausted state while removing the one observable that made Rapid Reset catchable. The attacker opens a stream and sends a complete request as before, so the backend dispatches it, but it never sends RST\_STREAM. Instead it sends a control frame that the specification allows on the wire but that is invalid in the current context, and the server, following its own correct error handling, resets the stream for the attacker, which never sends a reset of its own \cite{madeyouresetCloudflare,imperva}. Against the pinned Tomcat in this lab three such frames produce a clean per-stream reset: a WINDOW\_UPDATE with an increment of zero, a WINDOW\_UPDATE that overflows the flow-control window past its maximum, and a PRIORITY frame of the wrong length. Each is a protocol violation scoped to a single stream, so the server answers with a stream-level RST\_STREAM rather than tearing down the whole connection. Figure~\ref{fig:sequence} sets the two frame sequences side by side.
 
-\begin{figure*}[t]
-\centering
-\figslot{figs/sequence.pdf}{\textwidth}{0.45\textwidth}
-\caption{Frame sequences of the two attacks on one connection. Left: in Rapid Reset the client sends HEADERS and then its own RST\_STREAM on every stream. Right: in MadeYouReset the client sends HEADERS and a crafted WINDOW\_UPDATE with increment 0, and the server sends the RST\_STREAM. In both cases the backend work started by the request keeps running after the stream is reset.}
+\medskip
+\noindent\begin{minipage}{\columnwidth}
+\figslot{figs/sequence.pdf}{\linewidth}{0.45\linewidth}
+\captionof{figure}{Frame sequences of the two attacks on one connection. Left: in Rapid Reset the client sends HEADERS and then its own RST\_STREAM on every stream. Right: in MadeYouReset the client sends HEADERS and a crafted WINDOW\_UPDATE with increment 0, and the server sends the RST\_STREAM. In both cases the backend work started by the request keeps running after the stream is reset.}
 \label{fig:sequence}
-\end{figure*}
+\end{minipage}
+\medskip
 
 The consequence is what the lab calls a phantom stream. The protocol layer considers the stream closed the moment the server resets it, and the slot against the concurrency limit is freed, yet the request on that stream was already dispatched and the application keeps running it to completion. The access log confirms this directly: a stream reset about a millisecond after it opens still records a full backend service time for its request before it is finally recycled. The attacker thus accumulates application-layer work that is invisible at the protocol layer, bypasses the concurrency limit exactly as in Rapid Reset, and, because it sends no resets of its own, leaves a client-reset counter sitting at zero throughout. This is why the attack is correctly called indirection-based: the harmful reset is performed by the server, induced by a frame that is not itself a reset. Figure~\ref{fig:phantom} shows the two lifetimes on one time axis.
 
-\begin{figure}[t]
-\centering
-\figslot{figs/timeline.pdf}{\columnwidth}{0.5\columnwidth}
-\caption{A phantom stream with the work endpoint set to 500\,ms. The HTTP/2 stream is reset about 1\,ms after it opens and its concurrency slot is freed, but the backend request keeps running for the full 500\,ms. That leftover work is what the mismatch ratio of Section~\ref{sec:signal-mismatch} counts.}
+\medskip
+\noindent\begin{minipage}{\columnwidth}
+\figslot{figs/timeline.pdf}{\linewidth}{0.5\linewidth}
+\captionof{figure}{A phantom stream with the work endpoint set to 500\,ms. The HTTP/2 stream is reset about 1\,ms after it opens and its concurrency slot is freed, but the backend request keeps running for the full 500\,ms. That leftover work is what the mismatch ratio of Section~\ref{sec:signal-mismatch} counts.}
 \label{fig:phantom}
-\end{figure}
+\end{minipage}
+\medskip
 
 \subsection{Why containerized environments sharpen the impact}\label{sec:container-impact}
 
@@ -157,7 +176,7 @@ The testbed has to satisfy four requirements at once. It must be reproducible, s
 The lab is six containers on one internal bridge network named \texttt{h2lab-net}, plus an optional two-container metrics stack. Table~\ref{tab:services} lists each service and its job. Traffic enters at the guard, which proxies it to the victim; the victim writes protocol-level debug logs and serves an application-layer inflight counter; the exporter turns both into metrics; the detector scrapes the exporter and the guard once per second, decides whether an attack is in progress, and can drive the guard to block a source; and the dashboard shows the live state and offers a mitigation control. The attacker container is launched on demand rather than run continuously, which keeps the baseline clean.
 
 
-\begin{table*}[t]
+\begin{table*}[tp]
 \centering
 \caption{Services in the containerized testbed. All run on one private bridge network; only the dashboard and the guard entrypoint are published to the host.}
 \label{tab:services}
@@ -218,7 +237,7 @@ MadeYouReset cannot be produced with a high-level client, because a conformant l
 
 The MadeYouReset literature lists five candidate frames that should provoke a server reset. Not all of them behave the same way against a given server, so the tool includes a probe mode that sends each candidate once and reports whether this Tomcat answers with a stream-level reset, which is a usable trigger, or a connection-level error, which is not. Table~\ref{tab:primitives} gives the result for the pinned victim. Three of the five produce clean per-stream resets and are usable; the other two, a HEADERS or DATA frame on a half-closed stream, are treated by this Tomcat as connection errors and close the whole connection, so they cannot accumulate phantom streams. The default primitive is the zero-increment window update. Reporting this honestly, rather than assuming all five land, is part of what makes the simulation faithful to the specific server under test.
 
-\begin{table*}[t]
+\begin{table*}[tp]
 \centering
 \caption{MadeYouReset primitives against the pinned Tomcat 10.1.43, as reported by the probe. A stream-level reset is a usable trigger; a connection-level error is not.}
 \label{tab:primitives}
@@ -250,7 +269,7 @@ Detection runs in its own container that scrapes two sources once per second and
 
 The detector carries two signals because, as Section~\ref{sec:background} established, the two attacks are observable in different places. Table~\ref{tab:signals} summarises them. Both are smoothed with an exponentially weighted moving average, with weight 0.4 on the newest sample, so a single noisy reading does not flip the alert while a sustained change moves it within a second or two.
 
-\begin{table*}[t]
+\begin{table*}[tp]
 \centering
 \caption{The two detection signals. Each is EWMA-smoothed and compared against a threshold chosen from the evaluation data of Section~\ref{sec:evaluation}.}
 \label{tab:signals}
@@ -318,14 +337,8 @@ This design also sidesteps the attribution limit of Section~\ref{sec:attribution
 
 \subsection{Manual and automatic operation}\label{sec:mitigation-modes}
 
-The same mitigation runs two ways. In manual mode an operator watches the dashboard and clicks to mitigate when an alert fires; the dashboard can target the source attributed to a specific signal, so when both attacks are live at once the two controls can block two different sources. In automatic mode a toggle lets the detector act on its own the moment an alert is raised, blocking the attributed source without waiting for a human. Either way the block lasts for the cooldown window and can be cleared explicitly, and the dashboard shows the resulting state live, as in Figure~\ref{fig:dashboard}. The evaluation in Section~\ref{sec:evaluation} runs with automatic mitigation enabled so that the full reproduce, detect and mitigate loop can be measured end to end.
+The same mitigation runs two ways. In manual mode an operator watches the dashboard and clicks to mitigate when an alert fires; the dashboard can target the source attributed to a specific signal, so when both attacks are live at once the two controls can block two different sources. In automatic mode a toggle lets the detector act on its own the moment an alert is raised, blocking the attributed source without waiting for a human. Either way the block lasts for the cooldown window and can be cleared explicitly, and the dashboard shows the resulting state live. The evaluation in Section~\ref{sec:evaluation} runs with automatic mitigation enabled so that the full reproduce, detect and mitigate loop can be measured end to end.
 
-\begin{figure}[t]
-\centering
-\figslot{figs/dashboard.png}{\columnwidth}{0.67\columnwidth}
-\caption{The operator dashboard during a MadeYouReset run: the alert banner is raised, the live charts show the mismatch ratio above its threshold, and the mitigate control targets the attributed source.}
-\label{fig:dashboard}
-\end{figure}
 
 % =====================================================================
 % 7. PERFORMANCE EVALUATION AND ANALYSIS
@@ -340,8 +353,9 @@ The evaluation runs the same victim and detector through four scenarios back to 
 
 Table~\ref{tab:results} gives the signals for a representative run. The idle baseline and the legitimate spike both stay in the normal state: the client reset rate holds at zero and the mismatch ratio sits near 1, comfortably below the 3.0 threshold, even though the legitimate spike is doing real backend work. Rapid Reset drives the client reset rate to roughly 600 per second, an order of magnitude past its 50 per second threshold, and the detector reports Rapid Reset. MadeYouReset drives the mismatch ratio past 100 while the client reset rate stays at exactly zero, and the detector reports MadeYouReset. After automatic mitigation blocks the offending source at the guard, both signals drain back toward baseline and the state returns to normal.
 
-\begin{table*}[t]
+\begin{table}[tp]
 \centering
+\small
 \caption{Detection signals across the scenarios, representative run. The legitimate spike trips neither alert; each attack trips the one signal that applies to it; mitigation returns both to baseline.}
 \label{tab:results}
 \begin{tabular}{@{}lccl@{}}
@@ -355,14 +369,15 @@ MadeYouReset & 0 & $>$100 & MadeYouReset \\
 After mitigation & 0 & drains to $\sim$0 & normal \\
 \bottomrule
 \end{tabular}
-\end{table*}
+\end{table}
 
-\begin{figure*}[t]
-\centering
-\includegraphics[width=\textwidth]{figs/evaluation.png}
-\caption{One detector, two attacks, two signals. Top: the client reset rate spikes well past its threshold during Rapid Reset but stays flat at zero during MadeYouReset, so reset-rate monitoring alone is blind to the server-side attack. Bottom: the mismatch ratio (log scale) stays near 1 under the legitimate load spike and crosses its threshold for both attacks, catching the MadeYouReset case the top panel misses. The shaded regions mark where mitigation is active; after the source is blocked at the guard each signal collapses toward baseline.}
+\medskip
+\noindent\begin{minipage}{\columnwidth}
+\includegraphics[width=\linewidth]{figs/evaluation.png}
+\captionof{figure}{One detector, two attacks, two signals. Top: the client reset rate spikes well past its threshold during Rapid Reset but stays flat at zero during MadeYouReset, so reset-rate monitoring alone is blind to the server-side attack. Bottom: the mismatch ratio (log scale) stays near 1 under the legitimate load spike and crosses its threshold for both attacks, catching the MadeYouReset case the top panel misses. The shaded regions mark where mitigation is active; after the source is blocked at the guard each signal collapses toward baseline.}
 \label{fig:evaluation}
-\end{figure*}
+\end{minipage}
+\medskip
 
 \subsection{The detection gap, made visible}\label{sec:eval-gap}
 
@@ -388,8 +403,9 @@ The detection signals show that an attack is happening, but the rubric asks spec
 %   python3 scripts/availability_probe.py --duration 30 --label legit --csv docs/availability.csv
 %   # repeat for the attack phase with mitigation OFF, then ON, while
 %   # driving the matching attack with scripts/scenario.sh in another terminal.
-\begin{table*}[t]
+\begin{table}[tp]
 \centering
+\small
 \caption{Legitimate-user availability across phases, measured by the availability probe. Cells are completed from a probe run (see scripts/availability\_probe.py).}
 \label{tab:availability}
 \begin{tabular}{@{}lccc@{}}
@@ -401,14 +417,14 @@ Attack, no mitigation      & \dots & \dots & \dots \\
 Attack, with mitigation    & \dots & \dots & \dots \\
 \bottomrule
 \end{tabular}
-\end{table*}
+\end{table}
 
 
 \subsection{Robustness to a paced attacker}\label{sec:eval-paced}
 
 The standard fix and the mismatch ratio respond to different things, and an attacker can exploit the difference. The stream-reset-limit defence closes a connection once its reset rate crosses a budget, so it is defeated by slowing down: a MadeYouReset that paces its crafted frames keeps each connection's reset rate under the budget. The mismatch ratio does not depend on the reset rate. With a long backend time, even a slow trickle of resets keeps many requests running for already-closed streams, so the ratio and the phantom count stay high while the reset rate stays low. There is therefore a regime, slow resets with long backend work, in which the reset-limit defence never fires but StreamShield still detects the attack. The adaptive experiment sweeps the pacing and records, for each setting, the per-connection reset rate against a reset-limit budget and the peak mismatch ratio against its threshold. We model the sliding-window form of the reset-limit defence, one of the two forms the attack's authors describe, as a budget of 100 resets over 10 seconds, that is 10 per second per connection \cite{madeyouresetPaper}. Table~\ref{tab:adaptive} and Figure~\ref{fig:adaptive} give a representative run with three connections and a two-second backend time. As the attacker slows, its per-connection reset rate falls, and once the pacing gap reaches 0.2 seconds the rate drops to about 5 per second per connection, below the budget, so the reset-limit fix no longer fires. The mismatch ratio stays far above its threshold across the whole sweep, never falling below 8 even at the slowest pacing tested, so StreamShield detects the attack at every setting. The bottom three rows of Table~\ref{tab:adaptive} are the evasion window: a paced MadeYouReset the reset-limit defence misses and the divergence signal still catches. Table~\ref{tab:comparison} places this beside the other approaches: every rate-based signal is blind to at least one case, while StreamShield catches all three. Against the absolute-count form of the defence the same evasion follows by cycling connections before any one reaches the cap, because the aggregate mismatch ratio sums phantom work across connections while a per-connection reset count does not. Two further harnesses support the evaluation: one reports detection latency and false-positive rate over repeated trials and a range of benign workloads, and one derives the thresholds from the measured benign ceiling rather than assuming them.
 
-\begin{table*}[t]
+\begin{table*}[tp]
 \centering
 \caption{A paced MadeYouReset against the two defences (representative run; three connections, two-second backend time; reset-limit budget 10 resets per second per connection). As the attacker slows, its per-connection reset rate falls below the budget, so the reset-limit fix stops firing, while the mismatch ratio stays far above its threshold of 3.0 and detection holds at every setting.}
 \label{tab:adaptive}
@@ -427,14 +443,15 @@ Gap (s) & Resets/s/conn & Mismatch & Phantom & Reset-limit fires & Detected \\
 \end{tabular}
 \end{table*}
 
-\begin{figure}[t]
-\centering
-\includegraphics[width=\columnwidth]{figs/adaptive.png}
-\caption{The paced-attack sweep of Table~\ref{tab:adaptive}. As the attacker slows (larger pacing gap), the per-connection reset rate falls below the reset-limit budget, so the standard fix stops firing, while the mismatch ratio stays above its threshold throughout. The slow-pacing region is detected by StreamShield but missed by the reset-limit defence.}
+\medskip
+\noindent\begin{minipage}{\columnwidth}
+\includegraphics[width=\linewidth]{figs/adaptive.png}
+\captionof{figure}{The paced-attack sweep of Table~\ref{tab:adaptive}. As the attacker slows (larger pacing gap), the per-connection reset rate falls below the reset-limit budget, so the standard fix stops firing, while the mismatch ratio stays above its threshold throughout. The slow-pacing region is detected by StreamShield but missed by the reset-limit defence.}
 \label{fig:adaptive}
-\end{figure}
+\end{minipage}
+\medskip
 
-\begin{table*}[t]
+\begin{table*}[tp]
 \centering
 \caption{Which detection approach catches which attack, from the runs above. Rate-based signals are each blind to at least one case, and a paced MadeYouReset evades both. StreamShield pairs the client reset rate with the backend mismatch ratio, which is a state signal rather than a rate, and so catches all three.}
 \label{tab:comparison}
@@ -455,8 +472,9 @@ The traces above show the signals move; a harness repeats each scenario to make 
 
 Calibration shows the thresholds were not set optimistically. Running the calibration tool over the same benign workloads measured a benign client-reset ceiling of zero per second and a benign mismatch-ratio ceiling of 1.05. A safety factor of three above those ceilings recommends 3.16 for the mismatch threshold, which is essentially the 3.0 used here, and leaves the 50-per-second reset threshold with a wide margin over a benign ceiling of zero. The thresholds the lab assumed and the thresholds the data recommends agree.
 
-\begin{table*}[t]
+\begin{table}[tp]
 \centering
+\small
 \caption{Detection quality over five trials per attack and twenty benign runs (representative run). Both attacks were detected in every trial; one benign run of twenty raised a false alert.}
 \label{tab:quality}
 \begin{tabular}{@{}lccc@{}}
@@ -469,18 +487,12 @@ MadeYouReset & 5/5 & 0.04 & 2.6 \\
 Benign false positives & \multicolumn{3}{c}{1 / 20 \ (5\%)} \\
 \bottomrule
 \end{tabular}
-\end{table*}
+\end{table}
 
 \subsection{Container resource impact}\label{sec:eval-container}
 
-The optional metrics stack, Prometheus scraping the exporter, the detector and cAdvisor with a Grafana dashboard, records the same run as time series and adds the container's resource use. Figure~\ref{fig:grafana} is a view of it during a MadeYouReset: the reset-rate and mismatch panels carry the detection signals, and the lab containers' CPU climbs from a near-idle baseline to a sustained plateau for the duration of the attack before settling back. Because the victim runs under a container's resource ceiling, this is the exhaustion the attack is driving toward, measured directly rather than inferred, and it ties the detection signals to the availability impact of Section~\ref{sec:eval-availability}.
+The optional metrics stack, Prometheus scraping the exporter, the detector and cAdvisor, records the same run as time series and adds the container's resource use. During a MadeYouReset the lab containers' CPU climbs from a near-idle baseline to a sustained plateau for the duration of the attack before settling back once mitigation cuts the attacking source. Because the victim runs under a container's resource ceiling, this is the exhaustion the attack is driving toward, measured directly rather than inferred, and it ties the detection signals to the availability impact of Section~\ref{sec:eval-availability}.
 
-\begin{figure*}[t]
-\centering
-\includegraphics[width=\textwidth]{figs/grafana.png}
-\caption{The monitoring stack during a MadeYouReset. Top: the detection signals (reset rates; mismatch ratio and phantom streams). Bottom: the lab containers' CPU and memory from cAdvisor. CPU rises to a plateau for the duration of the attack and settles afterwards, the resource exhaustion the attack causes, measured directly.}
-\label{fig:grafana}
-\end{figure*}
 
 % =====================================================================
 % RELATED WORK
@@ -520,6 +532,7 @@ Several directions follow from these limits. The most immediate is to complete t
 % =====================================================================
 % BIBLIOGRAPHY
 % =====================================================================
+\clearpage
 \bibliographystyle{unsrt}
 \bibliography{report-refs}
 
