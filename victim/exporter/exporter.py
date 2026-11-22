@@ -98,8 +98,16 @@ _TYPES = {
     "victim_up": "gauge",
 }
 
+# Tomcat logs the HTTP/2 connection id in HEXADECIMAL (e.g. "Connection [b0d]")
+# but the stream id in decimal (e.g. "Stream [48765]"). The connection id MUST
+# be matched as hex -- a plain \d+ silently matches only the first ~9
+# connections of a freshly-started Tomcat (ids 1-9, where hex and decimal
+# coincide) and then stops matching every id containing a-f, which freezes the
+# reset/stream counters after enough connections accumulate. (conn, stream) is
+# only used as a de-dup key, so the exact base doesn't matter as long as every
+# line is captured.
 RE_STATE = re.compile(
-    r"Connection \[(\d+)\], Stream \[(\d+)\], State changed from \[\w+\] to \[(\w+)\]")
+    r"Connection \[([0-9a-fA-F]+)\], Stream \[(\d+)\], State changed from \[\w+\] to \[(\w+)\]")
 
 seen_open = set()        # keys that incremented open_streams (-> OPEN)
 seen_dispatch = set()    # keys counted as a dispatched request (-> HALF_CLOSED_REMOTE)
