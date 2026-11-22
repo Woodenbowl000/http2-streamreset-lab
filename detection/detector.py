@@ -19,11 +19,16 @@ and derives two signals:
       blind to this attack because the *server* resets its own streams, so this
       backend-side ratio is the detection contribution.
 
-Mitigation (Tier 1): on alert, if auto-mitigation is enabled (or the dashboard
-Mitigate button is pressed), block the current top source at the guard for a
-cooldown window. The victim sees every connection as coming from the guard, so
-"who is attacking" is read from the guard's real per-source view, while "is
-there an attack" is read from the victim's aggregate reset rate.
+Mitigation (Tier 1): on alert, if auto-mitigation is enabled (or a dashboard
+Mitigate button is pressed), block a source at the guard for a cooldown
+window. The victim sees every connection as coming from the guard, so "is
+there an attack" is read from the victim's aggregate reset rate, while "who is
+attacking" is read from the guard's real per-source view -- which now
+includes per-source RST_STREAM counts by direction (see guard.py's
+H2ResetScanner), so each attack's mitigation can target the source actually
+causing *that* pattern: Rapid Reset mitigation picks the top client-reset-rate
+source, MadeYouReset mitigation picks the top server-reset-rate source. These
+can be two different IPs, and the two are tracked and blocked independently.
 
 HTTP API (for the dashboard):
     GET  /state      full JSON state + rolling history for charts
@@ -64,6 +69,12 @@ _state = {
     "mismatch_ratio": 0.0,
     "mitigation_active": False,
     "blocked": {},
+    # Per-source attribution (from guard's RST_STREAM-by-direction counts):
+    # which IP is *currently* generating each signal's reset rate, if any.
+    # Populated every poll cycle; used to target mitigation per attack type
+    # instead of just "whoever holds the most live connections".
+    "top_client_reset_source": None,
+    "top_server_reset_source": None,
     "thresholds": {
         "rapid_reset_rate": RAPID_RESET_RATE_THRESHOLD,
         "mismatch_ratio": MISMATCH_RATIO_THRESHOLD,
@@ -105,9 +116,18 @@ def parse_prom(text):
 
 
 def pick_top_source():
-    """Read the guard's per-source connection counts and return the busiest IP."""
+    """Return the IP currently responsible for the most live connections at the
+    guard. Uses active_per_source (a live snapshot) rather than per_source (a
+    lifetime total that never resets) so mitigation targets whoever is actually
+    attacking right now -- not whichever source happened to be busiest earliest
+    in this guard's uptime. Falls back to the lifetime total only if nothing is
+    currently active (e.g. a burst that already ended between polls)."""
     try:
         data = json.loads(_get(GUARD_BLOCKLIST))
+        active = data.get("active_per_source", {})
+        if active:
+            ip, _ = max(active.items(), key=lambda kv: kv[1])
+            return ip
         per = data.get("per_source", {})
         if not per:
             return None
@@ -117,8 +137,15 @@ def pick_top_source():
         return None
 
 
-def mitigate(reason):
-    ip = pick_top_source()
+def mitigate(reason, ip=None):
+    """Block a source at the guard. If ip is not given, falls back to
+    pick_top_source() (busiest live connection count) -- used for the
+    generic/legacy path. Callers that know which attack signal they're
+    responding to should pass the attributed source explicitly (see
+    mitigate_signal) so Rapid Reset and MadeYouReset can each target their
+    own real attacker even when both are live at once."""
+    if ip is None:
+        ip = pick_top_source()
     if not ip:
         with _lock:
             _state["last_action"] = f"{reason}: no source to block yet"
@@ -132,6 +159,17 @@ def mitigate(reason):
     except Exception as e:
         with _lock:
             _state["last_action"] = f"{reason}: block failed: {e}"
+
+
+def mitigate_signal(signal, reason):
+    """signal: 'rapid_reset' (targets the attributed client-reset source) or
+    'madeyoureset' (targets the attributed server-reset source). Falls back to
+    pick_top_source() if no source has been attributed to that signal yet
+    (e.g. called right as a scenario starts, before a rate baseline exists)."""
+    key = "top_client_reset_source" if signal == "rapid_reset" else "top_server_reset_source"
+    with _lock:
+        ip = _state.get(key)
+    mitigate(reason, ip=ip)  # mitigate() itself falls back to pick_top_source() if ip is None
 
 
 def unmitigate():
@@ -151,6 +189,13 @@ def poll_loop():
     ewma_client = 0.0
     ewma_server = 0.0
     ewma_mismatch = 0.0
+    # Per-source RST_STREAM lifetime counts from the previous poll, by
+    # direction -- turned into a rate (delta/dt) each cycle, same reasoning as
+    # the aggregate cr_rate/sr_rate below: the guard's counters never reset,
+    # so only the delta between consecutive polls says who's active *now*.
+    prev_src_client = {}
+    prev_src_server = {}
+    prev_src_t = None
     while True:
         t0 = time.time()
         if _reset_ewma.is_set():
@@ -158,6 +203,9 @@ def poll_loop():
             prev = None
             prev_t = None
             ewma_client = ewma_server = ewma_mismatch = 0.0
+            prev_src_client = {}
+            prev_src_server = {}
+            prev_src_t = None
             _reset_ewma.clear()
         vic = {}
         try:
@@ -183,6 +231,50 @@ def poll_loop():
         prev = (cr, sr)
         prev_t = now
 
+        # Per-source attribution: who is *currently* causing each signal.
+        top_client_src = None
+        top_server_src = None
+        try:
+            guard_data = json.loads(_get(GUARD_BLOCKLIST))
+            cur_src_client = guard_data.get("client_reset_per_source", {})
+            cur_src_server = guard_data.get("server_reset_per_source", {})
+            if prev_src_t is not None:
+                sdt = max(1e-3, now - prev_src_t)
+                client_rates = {ip: max(0.0, (c - prev_src_client.get(ip, 0)) / sdt)
+                                for ip, c in cur_src_client.items()}
+                server_rates = {ip: max(0.0, (c - prev_src_server.get(ip, 0)) / sdt)
+                                 for ip, c in cur_src_server.items()}
+                if client_rates:
+                    ip, r = max(client_rates.items(), key=lambda kv: kv[1])
+                    if r > 0.5:  # small noise floor
+                        top_client_src = ip
+                if server_rates:
+                    # MadeYouReset's defining trait -- the one that makes it
+                    # invisible to reset-rate monitoring in the first place --
+                    # is that the SERVER resets streams while the CLIENT
+                    # itself stays quiet. A source with a high server-reset
+                    # rate but ALSO a high client-reset rate is almost
+                    # certainly a Rapid Reset attacker whose server-side
+                    # resets are just a side effect of its own flood (Tomcat
+                    # can emit real server RST_STREAM frames as a side effect
+                    # of handling a heavy client-reset flood), not a genuine
+                    # MadeYouReset technique. Score by server rate divided by
+                    # (1 + that same source's own client rate) so such
+                    # sources are heavily discounted rather than just
+                    # averaged down -- a pure MadeYouReset source (near-zero
+                    # client rate) keeps ~full credit; a Rapid Reset source
+                    # (large client rate) gets suppressed close to zero.
+                    def _server_score(ip):
+                        return server_rates[ip] / (1.0 + client_rates.get(ip, 0.0))
+                    ip = max(server_rates, key=_server_score)
+                    if server_rates[ip] > 0.5 and _server_score(ip) > 0.1:
+                        top_server_src = ip
+            prev_src_client = cur_src_client
+            prev_src_server = cur_src_server
+            prev_src_t = now
+        except Exception:
+            pass
+
         # classify
         alert = "NORMAL"
         if ewma_client >= RAPID_RESET_RATE_THRESHOLD:
@@ -195,6 +287,8 @@ def poll_loop():
             _state["server_reset_rate"] = round(ewma_server, 2)
             _state["mismatch_ratio"] = round(ewma_mismatch, 3)
             _state["alert"] = alert
+            _state["top_client_reset_source"] = top_client_src
+            _state["top_server_reset_source"] = top_server_src
             auto = _state["auto_mitigate"]
             # expire blocks in local view
             for ip, exp in list(_state["blocked"].items()):
@@ -211,8 +305,10 @@ def poll_loop():
                 "mitigation_active": _state["mitigation_active"],
             })
 
-        if auto and alert in ("RAPID_RESET", "MADEYOURESET"):
-            mitigate(f"auto/{alert}")
+        if auto and alert == "RAPID_RESET":
+            mitigate_signal("rapid_reset", f"auto/{alert}")
+        elif auto and alert == "MADEYOURESET":
+            mitigate_signal("madeyoureset", f"auto/{alert}")
 
         dt = POLL_INTERVAL - (time.time() - t0)
         if dt > 0:
@@ -279,7 +375,18 @@ class API(BaseHTTPRequestHandler):
                 _state["auto_mitigate"] = bool(d.get("auto", False))
             self._json(200, {"auto_mitigate": _state["auto_mitigate"]})
         elif self.path == "/mitigate":
-            mitigate("manual")
+            d = self._read_json()
+            kind = d.get("kind")  # optional: "rapid_reset" | "madeyoureset", from
+            # the dashboard's per-panel buttons. Each targets the source
+            # attributed to that specific signal (see mitigate_signal / the
+            # guard's per-source RST_STREAM-by-direction counts), so the two
+            # buttons can correctly block two different IPs when both attacks
+            # are live at once. No kind -> generic fallback (busiest live
+            # connection count, the pre-attribution behavior).
+            if kind in ("rapid_reset", "madeyoureset"):
+                mitigate_signal(kind, f"manual/{kind}")
+            else:
+                mitigate("manual")
             with _lock:
                 self._json(200, {"ok": True, "last_action": _state["last_action"]})
         elif self.path == "/unmitigate":

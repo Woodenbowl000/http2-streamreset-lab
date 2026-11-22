@@ -74,8 +74,23 @@ services:
     environment:
       DETECTOR_URL: http://detector:9130
       DASHBOARD_PORT: "8088"
+      # Lets the dashboard's "Run attack" buttons launch the attacker image
+      # directly (one-off `docker run`, same effect as scripts/scenario.sh)
+      # instead of requiring a separate terminal.
+      ATTACKER_IMAGE: http2-streamreset-lab-attacker:latest
+      ATTACKER_NETWORK: h2lab-net
     ports:
-      - "8088:8088"
+      # Bound to loopback only -- not "8088:8088", which Docker Desktop would
+      # publish on 0.0.0.0 (every network interface, reachable from your LAN).
+      # This dashboard holds the Docker socket (root-equivalent host control)
+      # specifically so it can launch attacks, so it must never be reachable
+      # from anywhere but this machine. See docs/SAFETY.md.
+      - "127.0.0.1:8088:8088"
+    volumes:
+      # Needed only to launch attacker containers on button click. Local lab
+      # use only -- see docs/SAFETY.md. Do not expose this dashboard port
+      # beyond your own machine.
+      - /var/run/docker.sock:/var/run/docker.sock
     networks: [labnet]
     depends_on: [detector]
 
@@ -114,6 +129,7 @@ services:
 
 networks:
   labnet:
+    name: h2lab-net
     driver: bridge
 
 volumes:
