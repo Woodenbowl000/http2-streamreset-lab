@@ -53,6 +53,8 @@
                directory="/usr/local/tomcat/logs"
                prefix="access" suffix=".log"
                pattern="%{yyyy-MM-dd'T'HH:mm:ss.SSS}t %h %r %s %D" />
+        <!-- Real inflight_requests(t) counter, see victim/valve/InflightValve.java -->
+        <Valve className="InflightValve" />
       </Host>
     </Engine>
   </Service>

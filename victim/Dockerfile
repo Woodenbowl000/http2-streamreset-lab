@@ -10,6 +10,15 @@ FROM tomcat:10.1.43-jdk17-temurin
 RUN rm -rf /usr/local/tomcat/webapps/*
 COPY webapp/ /usr/local/tomcat/webapps/ROOT/
 
+# InflightValve: real inflight_requests(t) counter (see valve/InflightValve.java
+# for why -- stock Tomcat 10.1.43 doesn't expose this over JMX). Compiled
+# against Tomcat's own lib/*.jar and dropped straight into lib/ so it loads
+# on Tomcat's common classloader, same as any other Valve -- no build tool,
+# no extra dependency.
+COPY valve/InflightValve.java /tmp/InflightValve.java
+RUN javac -cp "/usr/local/tomcat/lib/*" -d /usr/local/tomcat/lib /tmp/InflightValve.java \
+    && rm /tmp/InflightValve.java
+
 # Lab server config: h2c enabled, overhead protection disabled so the attack
 # is reproducible. logging.properties turns on org.apache.coyote.http2 FINE
 # logging, which is the Week-1 primary signal source for reset events.
