@@ -23,12 +23,32 @@ Mitigation (Tier 1): on alert, if auto-mitigation is enabled (or a dashboard
 Mitigate button is pressed), block a source at the guard for a cooldown
 window. The victim sees every connection as coming from the guard, so "is
 there an attack" is read from the victim's aggregate reset rate, while "who is
-attacking" is read from the guard's real per-source view -- which now
-includes per-source RST_STREAM counts by direction (see guard.py's
-H2ResetScanner), so each attack's mitigation can target the source actually
-causing *that* pattern: Rapid Reset mitigation picks the top client-reset-rate
-source, MadeYouReset mitigation picks the top server-reset-rate source. These
-can be two different IPs, and the two are tracked and blocked independently.
+attacking" is read from the guard's real per-source view.
+
+Rapid Reset mitigation targets the top per-source CLIENT-reset rate (from
+guard.py's H2ResetScanner) -- sound, because a client-sent RST_STREAM is an
+unambiguous, deliberate signal that only Rapid Reset's technique produces.
+
+MadeYouReset mitigation deliberately does NOT use per-source server-reset
+attribution, despite the guard tracking it. Confirmed experimentally: Tomcat
+sends a genuine server-side RST_STREAM frame whenever it has already started
+writing a response before the client's cancellation arrives -- an ordinary
+side effect of Rapid Reset's own flood specifically when the backend is fast
+(e.g. the ms=0 endpoint real Rapid Reset attacks use for max damage; slowing
+the backend to ms=500 against the same flood drove the per-source
+server-reset count to exactly zero). So at the wire-frame level, Rapid
+Reset's side-effect server resets are indistinguishable from MadeYouReset's
+genuine ones -- no amount of rate-scoring or smoothing fixes this, because
+the distinguishing information (does the backend keep running the reset
+stream's work, i.e. the mismatch_ratio signature) isn't present in a raw
+RST_STREAM-direction count; it's in victim-exporter's inflight/open-stream
+state machine, which has no source-IP attribution (the victim only ever sees
+guard's IP) and can't safely get one without either patching stock Tomcat to
+understand PROXY protocol -- which isn't viable since this project pins a
+STOCK Tomcat -- or a comparable change. MadeYouReset mitigation therefore
+falls back to the same "busiest live connection" heuristic Rapid Reset used
+before this file added per-source attribution, which is an honest reflection
+of what's actually knowable here, not a regression.
 
 HTTP API (for the dashboard):
     GET  /state      full JSON state + rolling history for charts
@@ -162,14 +182,20 @@ def mitigate(reason, ip=None):
 
 
 def mitigate_signal(signal, reason):
-    """signal: 'rapid_reset' (targets the attributed client-reset source) or
-    'madeyoureset' (targets the attributed server-reset source). Falls back to
-    pick_top_source() if no source has been attributed to that signal yet
-    (e.g. called right as a scenario starts, before a rate baseline exists)."""
-    key = "top_client_reset_source" if signal == "rapid_reset" else "top_server_reset_source"
-    with _lock:
-        ip = _state.get(key)
-    mitigate(reason, ip=ip)  # mitigate() itself falls back to pick_top_source() if ip is None
+    """signal: 'rapid_reset' targets the attributed client-reset source (sound
+    -- see this module's docstring). 'madeyoureset' intentionally ignores
+    top_server_reset_source and uses the plain pick_top_source() fallback
+    (busiest live connection): per-source server-reset attribution is kept
+    around as diagnostic data (visible in guard's /blocklist) but is NOT
+    reliable enough to drive mitigation -- confirmed experimentally that
+    Rapid Reset's own side effects are indistinguishable from it at the
+    wire-frame level (see this module's docstring)."""
+    if signal == "rapid_reset":
+        with _lock:
+            ip = _state.get("top_client_reset_source")
+        mitigate(reason, ip=ip)  # mitigate() falls back to pick_top_source() if ip is None
+    else:
+        mitigate(reason)  # busiest live connection -- no per-source attribution claim
 
 
 def unmitigate():
