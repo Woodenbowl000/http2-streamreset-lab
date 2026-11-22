@@ -190,23 +190,35 @@ def newest_log():
 
 
 def tail_loop():
+    # Only re-glob the log directory (a real filesystem scan) periodically --
+    # NOT on every line. Under a flood, Tomcat's FINE-level HTTP/2 logging can
+    # emit thousands of lines/sec; re-globbing every single one turns this
+    # thread into a CPU/syscall hot loop that can starve the HTTP server
+    # thread (same process, same GIL) past the detector's poll timeout --
+    # exactly when the detector most needs a response. Log rotation is rare;
+    # checking for it once a second is still effectively instant to notice.
+    ROTATION_CHECK_INTERVAL = 1.0
     current = None
     fh = None
+    last_check = 0.0
     while True:
-        target = newest_log()
-        if target is None:
-            with _lock:
-                M["victim_up"] = 0
-            time.sleep(1.0)
-            continue
-        if target != current:
-            if fh:
-                fh.close()
-            fh = open(target, "r", errors="replace")
-            fh.seek(0, os.SEEK_END)
-            current = target
-            with _lock:
-                M["victim_up"] = 1
+        now = time.time()
+        if fh is None or (now - last_check) >= ROTATION_CHECK_INTERVAL:
+            target = newest_log()
+            last_check = now
+            if target is None:
+                with _lock:
+                    M["victim_up"] = 0
+                time.sleep(1.0)
+                continue
+            if target != current:
+                if fh:
+                    fh.close()
+                fh = open(target, "r", errors="replace")
+                fh.seek(0, os.SEEK_END)
+                current = target
+                with _lock:
+                    M["victim_up"] = 1
         line = fh.readline()
         if line:
             try:

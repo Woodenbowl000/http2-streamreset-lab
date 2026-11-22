@@ -53,6 +53,12 @@
   .legend{display:flex;gap:14px;font-size:12px;color:var(--muted);margin-bottom:6px}
   .legend i{display:inline-block;width:10px;height:3px;vertical-align:middle;margin-right:5px}
   code{background:#0b0e13;border:1px solid var(--border);border-radius:5px;padding:1px 5px;font-size:12px}
+  .panelctl{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)}
+  button.small{padding:7px 12px;font-size:13px}
+  button.rapid{background:#3a1416;border-color:var(--red)}
+  button.rapid:hover{border-color:#ff8a85}
+  button.mkr{background:#352507;border-color:var(--amber)}
+  button.mkr:hover{border-color:#f0c04c}
 </style>
 </head>
 <body>
@@ -79,32 +85,48 @@
       <h2>Client reset rate (Rapid Reset signal)</h2>
       <div class="legend"><span><i style="background:#f85149"></i>reset rate /s</span><span><i style="background:#8b949e"></i>alert threshold</span></div>
       <canvas id="chartRR"></canvas>
+      <div class="panelctl">
+        <button class="small rapid" onclick="runAttack('rapid-reset')">Run Rapid Reset (30s)</button>
+        <button class="small rapid" onclick="mitigateKind('rapid_reset')">Mitigate Rapid Reset</button>
+      </div>
+      <div class="action" id="runRR"></div>
     </div>
     <div class="card">
       <h2>Mismatch ratio (MadeYouReset signal)</h2>
       <div class="legend"><span><i style="background:#d29922"></i>inflight / open_streams</span><span><i style="background:#8b949e"></i>alert threshold</span></div>
       <canvas id="chartMR"></canvas>
+      <div class="panelctl">
+        <button class="small mkr" onclick="runAttack('madeyoureset')">Run MadeYouReset (20s)</button>
+        <button class="small mkr" onclick="mitigateKind('madeyoureset')">Mitigate MadeYouReset</button>
+      </div>
+      <div class="action" id="runMR"></div>
     </div>
   </div>
 
   <div class="card">
-    <h2>Mitigation controls (Tier 1 — block the source at the guard)</h2>
+    <h2>Shared mitigation state (one blocklist at the guard, for both attacks)</h2>
     <div class="controls">
-      <button class="primary" onclick="mitigate()">Mitigate now</button>
       <button class="ghost" onclick="unmitigate()">Clear mitigation</button>
-      <label class="switch"><input type="checkbox" id="auto" onchange="setAuto(this.checked)"> Auto-mitigate on alert</label>
+      <label class="switch"><input type="checkbox" id="auto" onchange="setAuto(this.checked)"> Auto-mitigate on alert (handles either attack automatically)</label>
     </div>
     <div class="action" id="action"></div>
     <div class="action" id="blocked"></div>
+    <div class="sub" style="margin-top:8px">
+      Each panel's "Mitigate" button targets the source actually attributed to <em>that signal</em> —
+      the guard counts RST_STREAM frames per source IP, split by direction (client→victim = Rapid
+      Reset, victim→client = MadeYouReset) — so if two different sources are attacking at once, the two
+      buttons (and auto-mitigate) correctly block two different IPs, not just whichever holds the most
+      live connections.
+    </div>
   </div>
 
   <div class="card">
-    <h2>Run a scenario (from the repo, in another terminal)</h2>
+    <h2>Run a scenario from a terminal instead</h2>
     <div class="sub" style="color:var(--muted)">
-      Idle baseline: just watch.<br>
+      The buttons above launch the same attacker image. Equivalent CLI:<br>
       Legitimate spike: <code>./scripts/scenario.sh legit</code><br>
       Rapid Reset attack: <code>./scripts/scenario.sh rapid-reset</code><br>
-      MadeYouReset spike (research): <code>./scripts/scenario.sh madeyoureset</code>
+      MadeYouReset spike: <code>./scripts/scenario.sh madeyoureset</code>
     </div>
   </div>
 </div>
@@ -177,10 +199,31 @@ async function tick(){
   drawChart($('chartRR'), RR.data, RR.thr, '#f85149');
   drawChart($('chartMR'), MR.data, MR.thr, '#d29922');
 }
-async function mitigate(){ await fetch('/api/mitigate',{method:'POST'}); tick(); }
+async function mitigateKind(kind){
+  await fetch('/api/mitigate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind})});
+  tick();
+}
 async function unmitigate(){ await fetch('/api/unmitigate',{method:'POST'}); tick(); }
 async function setAuto(v){ await fetch('/api/mode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({auto:v})}); }
+async function runAttack(mode){
+  const el = mode==='rapid-reset' ? $('runRR') : $('runMR');
+  try{
+    await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode})});
+    el.textContent = mode+': launched';
+  }catch(e){ el.textContent = mode+': failed to launch ('+e+')'; }
+  pollRuns();
+}
+async function pollRuns(){
+  try{
+    const runs = await (await fetch('/api/run/status')).json();
+    const latest = kind => runs.find(r => r.mode===kind);
+    const rr = latest('rapid-reset'), mr = latest('madeyoureset');
+    if(rr) $('runRR').textContent = 'rapid-reset: '+(rr.running?'running…':'finished');
+    if(mr) $('runMR').textContent = 'madeyoureset: '+(mr.running?'running…':'finished');
+  }catch(e){}
+}
 setInterval(tick, 1000); tick();
+setInterval(pollRuns, 2000);
 window.addEventListener('resize', tick);
 </script>
 </body>

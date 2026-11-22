@@ -4,9 +4,10 @@ guard — an L4 (TCP) proxy that sits in front of the victim and is the lab's
 mitigation enforcement point.
 
 All lab traffic (legitimate load AND attack) connects to the guard, which
-forwards raw bytes to the victim. Because it operates at the TCP layer it passes
-HTTP/2 (h2c) through transparently without parsing frames. Its one job beyond
-forwarding is a source-IP blocklist:
+forwards raw bytes to the victim unmodified -- it never buffers, delays, or
+rewrites anything (bytes are proxied as they arrive; frames are only counted
+on the side, read-only). Its one job beyond forwarding is a source-IP
+blocklist:
 
     * POST /block    {"ip": "..."}      add a source to the blocklist
     * POST /unblock  {"ip": "..."}      remove a source
@@ -19,6 +20,19 @@ decides a source is flooding resets, it calls /block and the guard drops all
 current and future connections from that source for a cooldown window — the
 "terminate the connection and blocklist the source" action, demonstrable live
 from the dashboard's Mitigate button.
+
+Per-source attack attribution: alongside relaying bytes, the guard does a
+best-effort, read-only scan of each connection's HTTP/2 frames (both
+directions) to count RST_STREAM frames per source IP, split by direction:
+  - client -> victim RST_STREAM  = that source flooding client resets
+    (the Rapid Reset / CVE-2023-44487 signal, attributed per IP)
+  - victim -> client RST_STREAM  = that source triggering server-side resets
+    (the MadeYouReset / CVE-2025-8671 signal, attributed per IP)
+This lets the detector target mitigation at whichever source is actually
+causing *each specific* attack pattern, instead of only "whoever holds the
+most live connections" (which can't tell the two attacks apart). The scan is
+advisory only: a parse error or non-HTTP/2 traffic just stops counting for
+that connection -- it can never block, alter, or delay the proxied bytes.
 """
 import asyncio
 import json
@@ -26,6 +40,62 @@ import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+RST_STREAM_FRAME_TYPE = 0x3
+H2_PREFACE = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+MAX_SCAN_BUFFER = 1_000_000  # safety cap: abandon counting for this connection
+                             # rather than buffer unbounded non-HTTP/2 traffic
+
+
+class H2ResetScanner:
+    """Incrementally scans a one-directional raw byte stream for HTTP/2
+    RST_STREAM frames. Stateful across reads (frames split across TCP
+    packets), best-effort, and side-effect-free: feed() only ever returns a
+    count, it never raises and never touches the bytes it's given."""
+
+    __slots__ = ("buf", "preface_checked", "abandoned")
+
+    def __init__(self):
+        self.buf = b""
+        self.preface_checked = False
+        self.abandoned = False
+
+    def feed(self, data: bytes) -> int:
+        if self.abandoned:
+            return 0
+        try:
+            self.buf += data
+            count = 0
+            if not self.preface_checked:
+                if len(self.buf) < len(H2_PREFACE):
+                    if not H2_PREFACE.startswith(self.buf):
+                        self.preface_checked = True
+                    else:
+                        return 0  # wait for more bytes to confirm/deny preface
+                else:
+                    self.preface_checked = True
+                    if self.buf.startswith(H2_PREFACE):
+                        self.buf = self.buf[len(H2_PREFACE):]
+            while len(self.buf) >= 9:
+                length = int.from_bytes(self.buf[0:3], "big")
+                ftype = self.buf[3]
+                total = 9 + length
+                if len(self.buf) < total:
+                    if total > MAX_SCAN_BUFFER:
+                        self.abandoned = True
+                        self.buf = b""
+                    break
+                if ftype == RST_STREAM_FRAME_TYPE:
+                    count += 1
+                self.buf = self.buf[total:]
+            if len(self.buf) > MAX_SCAN_BUFFER:
+                self.abandoned = True
+                self.buf = b""
+            return count
+        except Exception:
+            self.abandoned = True
+            self.buf = b""
+            return 0
 
 VICTIM_HOST = os.environ.get("VICTIM_HOST", "victim")
 VICTIM_PORT = int(os.environ.get("VICTIM_PORT", "8080"))
@@ -41,8 +111,10 @@ _stats = {
     "bytes_c2s": 0,
     "bytes_s2c": 0,
 }
-_per_source = {}           # ip -> connection count
+_per_source = {}           # ip -> connection count (lifetime total)
 _active = {}               # ip -> set of (client_writer, victim_writer)
+_client_reset_per_source = {}  # ip -> lifetime count of client->victim RST_STREAM
+_server_reset_per_source = {}  # ip -> lifetime count of victim->client RST_STREAM
 _loop = None               # asyncio loop ref, set when the proxy starts
 
 
@@ -92,7 +164,7 @@ def _is_blocked(ip: str) -> bool:
         return True
 
 
-async def _pump(reader, writer, counter_key):
+async def _pump(reader, writer, counter_key, scanner=None, reset_counts=None, ip=None):
     try:
         while True:
             data = await reader.read(65536)
@@ -100,8 +172,11 @@ async def _pump(reader, writer, counter_key):
                 break
             writer.write(data)
             await writer.drain()
+            n_rst = scanner.feed(data) if scanner is not None else 0
             with _lock:
                 _stats[counter_key] += len(data)
+                if n_rst and reset_counts is not None and ip is not None:
+                    reset_counts[ip] = reset_counts.get(ip, 0) + n_rst
     except Exception:
         pass
     finally:
@@ -137,10 +212,12 @@ async def handle_client(client_reader, client_writer):
     _register(ip, pair)
     with _lock:
         _stats["active_connections"] += 1
+    c2v_scanner = H2ResetScanner()
+    v2c_scanner = H2ResetScanner()
     try:
         await asyncio.gather(
-            _pump(client_reader, victim_writer, "bytes_c2s"),
-            _pump(victim_reader, client_writer, "bytes_s2c"),
+            _pump(client_reader, victim_writer, "bytes_c2s", c2v_scanner, _client_reset_per_source, ip),
+            _pump(victim_reader, client_writer, "bytes_s2c", v2c_scanner, _server_reset_per_source, ip),
         )
     finally:
         _unregister(ip, pair)
@@ -182,7 +259,26 @@ class Control(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/blocklist":
             with _lock:
-                self._json(200, {"blocklist": dict(_blocklist), "per_source": dict(_per_source)})
+                # per_source is a lifetime total (useful for visibility/debugging)
+                # but must NOT drive mitigation target selection: in a long-running
+                # guard it permanently favors whichever source attacked first,
+                # even after that source is gone. active_per_source is a live
+                # snapshot (current open connections) and is what the detector
+                # should use to pick "the busiest source right now".
+                active_per_source = {ip: len(pairs) for ip, pairs in _active.items() if pairs}
+                self._json(200, {
+                    "blocklist": dict(_blocklist),
+                    "per_source": dict(_per_source),
+                    "active_per_source": active_per_source,
+                    # Lifetime counts of RST_STREAM frames seen per source, by
+                    # direction. Like per_source these are cumulative and never
+                    # reset -- the detector turns them into *rates* (deltas
+                    # between polls) before picking a mitigation target, for
+                    # the same reason active_per_source replaced per_source
+                    # there (see pick_top_source's docstring in detector.py).
+                    "client_reset_per_source": dict(_client_reset_per_source),
+                    "server_reset_per_source": dict(_server_reset_per_source),
+                })
         elif self.path == "/metrics":
             with _lock:
                 s = dict(_stats)
