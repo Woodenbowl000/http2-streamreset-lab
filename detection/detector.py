@@ -87,6 +87,7 @@ _state = {
     "client_reset_rate": 0.0,
     "server_reset_rate": 0.0,
     "mismatch_ratio": 0.0,
+    "phantom_streams": 0.0,   # direct count of backend work with no open stream
     "mitigation_active": False,
     "blocked": {},
     # Per-source attribution (from guard's RST_STREAM-by-direction counts):
@@ -215,6 +216,7 @@ def poll_loop():
     ewma_client = 0.0
     ewma_server = 0.0
     ewma_mismatch = 0.0
+    ewma_phantom = 0.0
     # Per-source RST_STREAM lifetime counts from the previous poll, by
     # direction -- turned into a rate (delta/dt) each cycle, same reasoning as
     # the aggregate cr_rate/sr_rate below: the guard's counters never reset,
@@ -228,7 +230,7 @@ def poll_loop():
             # drop smoothing + rate baselines so a new scenario starts clean
             prev = None
             prev_t = None
-            ewma_client = ewma_server = ewma_mismatch = 0.0
+            ewma_client = ewma_server = ewma_mismatch = ewma_phantom = 0.0
             prev_src_client = {}
             prev_src_server = {}
             prev_src_t = None
@@ -242,6 +244,7 @@ def poll_loop():
         cr = vic.get("victim_client_resets", 0.0)
         sr = vic.get("victim_server_resets", 0.0)
         mismatch_raw = vic.get("victim_mismatch_ratio", 0.0)
+        phantom_raw = vic.get("victim_phantom_streams", 0.0)
 
         if prev is not None and prev_t is not None:
             dt = max(1e-3, now - prev_t)
@@ -253,6 +256,7 @@ def poll_loop():
         ewma_client = EWMA_ALPHA * cr_rate + (1 - EWMA_ALPHA) * ewma_client
         ewma_server = EWMA_ALPHA * sr_rate + (1 - EWMA_ALPHA) * ewma_server
         ewma_mismatch = EWMA_ALPHA * mismatch_raw + (1 - EWMA_ALPHA) * ewma_mismatch
+        ewma_phantom = EWMA_ALPHA * phantom_raw + (1 - EWMA_ALPHA) * ewma_phantom
 
         prev = (cr, sr)
         prev_t = now
@@ -312,6 +316,7 @@ def poll_loop():
             _state["client_reset_rate"] = round(ewma_client, 2)
             _state["server_reset_rate"] = round(ewma_server, 2)
             _state["mismatch_ratio"] = round(ewma_mismatch, 3)
+            _state["phantom_streams"] = round(ewma_phantom, 1)
             _state["alert"] = alert
             _state["top_client_reset_source"] = top_client_src
             _state["top_server_reset_source"] = top_server_src
@@ -327,6 +332,7 @@ def poll_loop():
                 "client_reset_rate": round(ewma_client, 2),
                 "server_reset_rate": round(ewma_server, 2),
                 "mismatch_ratio": round(ewma_mismatch, 3),
+                "phantom_streams": round(ewma_phantom, 1),
                 "alert": alert,
                 "mitigation_active": _state["mitigation_active"],
             })
@@ -371,6 +377,8 @@ class API(BaseHTTPRequestHandler):
                 f"detector_server_reset_rate {s['server_reset_rate']}",
                 "# TYPE detector_mismatch_ratio gauge",
                 f"detector_mismatch_ratio {s['mismatch_ratio']}",
+                "# TYPE detector_phantom_streams gauge",
+                f"detector_phantom_streams {s['phantom_streams']}",
                 "# TYPE detector_alert gauge",
                 f'detector_alert{{state="{s["alert"]}"}} 1',
                 "# TYPE detector_mitigation_active gauge",

@@ -1,2 +1,4 @@
-# Host-side tooling for scripts/evaluate.py (the lab services themselves need no pip deps).
+# Host-side tooling for scripts/evaluate.py and scripts/availability_probe.py
+# (the lab services themselves need no pip deps).
 matplotlib>=3.7
+h2==4.4.1

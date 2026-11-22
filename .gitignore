@@ -8,3 +8,7 @@ docs/evaluation.csv
 http2-streamreset-lab.zip
 __pycache__/
 *.pyc
+
+# not part of this lab repo
+CCCEP/
+read/

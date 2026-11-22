@@ -41,6 +41,12 @@ services:
       VICTIM_PORT: "8080"
       GUARD_LISTEN_PORT: "8080"
       GUARD_CONTROL_PORT: "9120"
+      # Experimental connection-scoped inline mitigation (opt-in; default OFF so
+      # the verified source-IP blocklist demo is unchanged). When "true", the
+      # guard serves a GOAWAY(ENHANCE_YOUR_CALM) and tears down any single
+      # connection that churns more than GUARD_CONN_RESET_BUDGET resets.
+      GUARD_INLINE_MITIGATION: "false"
+      GUARD_CONN_RESET_BUDGET: "100"
     ports:
       - "8080:8080"        # published for manual curl/nghttp testing
     expose:
@@ -127,6 +133,29 @@ services:
     networks: [labnet]
     profiles: ["metrics"]
 
+  # Grafana with an auto-provisioned Prometheus datasource and the StreamShield
+  # dashboard (detection signals + victim container CPU/memory). Comes up ready
+  # at http://localhost:3000 -- anonymous viewing is on for easy screenshots;
+  # log in as admin/admin to edit. Bound to loopback only, like the dashboard.
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: h2lab-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_DEFAULT_THEME: dark
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks: [labnet]
+    depends_on: [prometheus]
+    profiles: ["metrics"]
+
 networks:
   labnet:
     name: h2lab-net
@@ -134,3 +163,4 @@ networks:
 
 volumes:
   victim-logs:
+  grafana-data:

@@ -83,6 +83,14 @@ M = {
     "victim_open_streams": 0,
     "victim_inflight_requests": 0,
     "victim_mismatch_ratio": 0.0,
+    # Direct count of Phantom Streams: backend work still in flight that has no
+    # corresponding open protocol stream (inflight - open_streams, floored at 0).
+    # This is an absolute measure of the phenomenon the attack creates, and a
+    # companion to the mismatch_ratio (which is the same divergence as a ratio).
+    # It is steadier than the ratio when open_streams is near zero, and it reads
+    # directly as "how many requests are running for streams the protocol has
+    # already closed".
+    "victim_phantom_streams": 0,
     "victim_up": 0,
 }
 _TYPES = {
@@ -95,6 +103,7 @@ _TYPES = {
     "victim_open_streams": "gauge",
     "victim_inflight_requests": "gauge",
     "victim_mismatch_ratio": "gauge",
+    "victim_phantom_streams": "gauge",
     "victim_up": "gauge",
 }
 
@@ -156,11 +165,13 @@ def process_line(line: str):
 
 
 def _recompute():
-    """Refresh mismatch_ratio from the two independent signals: inflight
-    (real, from InflightValve) and open_streams (from the log)."""
-    M["victim_mismatch_ratio"] = (
-        M["victim_inflight_requests"] / max(M["victim_open_streams"], 1)
-    )
+    """Refresh mismatch_ratio and the direct phantom-stream count from the two
+    independent signals: inflight (real, from InflightValve) and open_streams
+    (from the log)."""
+    inflight = M["victim_inflight_requests"]
+    open_streams = M["victim_open_streams"]
+    M["victim_mismatch_ratio"] = inflight / max(open_streams, 1)
+    M["victim_phantom_streams"] = max(0, inflight - open_streams)
 
 
 def valve_poll_loop():

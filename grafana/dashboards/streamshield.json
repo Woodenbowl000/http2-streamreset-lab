@@ -1,0 +1,119 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": true,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Reset rates — client (Rapid Reset) vs server (MadeYouReset)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "streamshield-prom" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 }, "unit": "short" },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "expr": "detector_client_reset_rate", "legendFormat": "client reset /s", "refId": "A", "datasource": { "type": "prometheus", "uid": "streamshield-prom" } },
+        { "expr": "detector_server_reset_rate", "legendFormat": "server reset /s", "refId": "B", "datasource": { "type": "prometheus", "uid": "streamshield-prom" } }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "MadeYouReset signals — mismatch ratio and phantom streams",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "streamshield-prom" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 }, "unit": "short" },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "expr": "detector_mismatch_ratio", "legendFormat": "mismatch ratio", "refId": "A", "datasource": { "type": "prometheus", "uid": "streamshield-prom" } },
+        { "expr": "detector_phantom_streams", "legendFormat": "phantom streams", "refId": "B", "datasource": { "type": "prometheus", "uid": "streamshield-prom" } }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Lab containers CPU (cores)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "streamshield-prom" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 20 }, "unit": "short", "decimals": 2 },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } },
+      "targets": [
+        { "expr": "rate(container_cpu_usage_seconds_total{id=\"/docker\"}[1m])", "legendFormat": "lab containers (cores)", "refId": "A", "datasource": { "type": "prometheus", "uid": "streamshield-prom" } }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Lab containers memory",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "streamshield-prom" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 20 }, "unit": "bytes" },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } },
+      "targets": [
+        { "expr": "container_memory_usage_bytes{id=\"/docker\"}", "legendFormat": "lab containers", "refId": "A", "datasource": { "type": "prometheus", "uid": "streamshield-prom" } }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Guard enforcement",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "streamshield-prom" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": {
+        "defaults": { "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 }, "unit": "short" },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "expr": "guard_active_connections", "legendFormat": "active connections", "refId": "A", "datasource": { "type": "prometheus", "uid": "streamshield-prom" } },
+        { "expr": "guard_blocked_connections_total", "legendFormat": "blocked (total)", "refId": "B", "datasource": { "type": "prometheus", "uid": "streamshield-prom" } },
+        { "expr": "guard_inline_mitigated_total", "legendFormat": "inline mitigated (total)", "refId": "C", "datasource": { "type": "prometheus", "uid": "streamshield-prom" } }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Current mismatch ratio",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "streamshield-prom" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 2,
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 3 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "area", "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "textMode": "auto" },
+      "targets": [
+        { "expr": "detector_mismatch_ratio", "legendFormat": "mismatch", "refId": "A", "datasource": { "type": "prometheus", "uid": "streamshield-prom" } }
+      ]
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "tags": [ "streamshield" ],
+  "templating": { "list": [] },
+  "time": { "from": "now-15m", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "StreamShield — HTTP/2 Stream-Reset DoS",
+  "uid": "streamshield",
+  "version": 1,
+  "weekStart": ""
+}

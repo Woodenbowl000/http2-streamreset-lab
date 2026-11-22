@@ -1,0 +1,188 @@
+% =====================================================================
+% report-refs.bib
+% Bibliography for the HTTP/2 stream-reset DoS lab report.
+% Style mirrors cas-refs.bib: "[Online]" tag, a clickable URL/DOI, the
+% publication date and the last access date (22 November 2026).
+% These are standards, vendor advisories and primary security research;
+% JCR/JIF is marked not applicable.
+% Requires hyperref support in the LaTeX document.
+% =====================================================================
+
+@misc{rfc9113,
+  author       = {Thomson, Martin and Benfield, Cory},
+  title        = {{RFC 9113}: {HTTP/2}},
+  howpublished = {Internet Engineering Task Force (IETF), Request for Comments 9113. [Online]. \href{https://www.rfc-editor.org/rfc/rfc9113}
+                   {https://www.rfc-editor.org/rfc/rfc9113}},
+  year         = {2022},
+  month        = jun,
+  note         = {Published June 2022. Last accessed: 22 November 2026. [Online]. Internet standard (obsoletes RFC 7540); JCR/JIF: not applicable}
+}
+
+@misc{rapidresetCloudflare,
+  author       = {{Cloudflare}},
+  title        = {{HTTP/2} Zero-Day Vulnerability Results in Record-Breaking {DDoS} Attacks},
+  howpublished = {Cloudflare Blog. [Online]. \href{https://blog.cloudflare.com/zero-day-rapid-reset-http2-record-breaking-ddos-attack}
+                   {https://blog.cloudflare.com/zero-day-rapid-reset-http2-record-breaking-ddos-attack}},
+  year         = {2023},
+  month        = oct,
+  note         = {Published 10 October 2023. Last accessed: 22 November 2026. [Online]. Primary vendor disclosure (CVE-2023-44487); JCR/JIF: not applicable}
+}
+
+@misc{rapidresetCloudflareTech,
+  author       = {{Cloudflare}},
+  title        = {{HTTP/2} Rapid Reset: Deconstructing the Record-Breaking Attack},
+  howpublished = {Cloudflare Blog. [Online]. \href{https://blog.cloudflare.com/technical-breakdown-http2-rapid-reset-ddos-attack/}
+                   {https://blog.cloudflare.com/technical-breakdown-http2-rapid-reset-ddos-attack/}},
+  year         = {2023},
+  month        = oct,
+  note         = {Published 10 October 2023. Last accessed: 22 November 2026. [Online]. Primary vendor technical breakdown; JCR/JIF: not applicable}
+}
+
+@misc{cisaRapidReset,
+  author       = {{Cybersecurity and Infrastructure Security Agency (CISA)}},
+  title        = {{HTTP/2} Rapid Reset Vulnerability, {CVE-2023-44487}},
+  howpublished = {CISA Alerts. [Online]. \href{https://www.cisa.gov/news-events/alerts/2023/10/10/http2-rapid-reset-vulnerability-cve-2023-44487}
+                   {https://www.cisa.gov/news-events/alerts/2023/10/10/http2-rapid-reset-vulnerability-cve-2023-44487}},
+  year         = {2023},
+  month        = oct,
+  note         = {Published 10 October 2023. Last accessed: 22 November 2026. [Online]. Government advisory; JCR/JIF: not applicable}
+}
+
+@misc{cve202344487,
+  author       = {{National Vulnerability Database}},
+  title        = {{CVE-2023-44487}: {HTTP/2} Rapid Reset},
+  howpublished = {NIST National Vulnerability Database. [Online]. \href{https://nvd.nist.gov/vuln/detail/CVE-2023-44487}
+                   {https://nvd.nist.gov/vuln/detail/CVE-2023-44487}},
+  year         = {2023},
+  note         = {Published 10 October 2023; CVSS 3.1 base score 7.5 (High). Last accessed: 22 November 2026. [Online]. Vulnerability record; JCR/JIF: not applicable}
+}
+
+@misc{madeyouresetCloudflare,
+  author       = {{Cloudflare}},
+  title        = {{MadeYouReset}: An {HTTP/2} Vulnerability Thwarted by Rapid Reset Mitigations},
+  howpublished = {Cloudflare Blog. [Online]. \href{https://blog.cloudflare.com/madeyoureset-an-http-2-vulnerability-thwarted-by-rapid-reset-mitigations}
+                   {https://blog.cloudflare.com/madeyoureset-an-http-2-vulnerability-thwarted-by-rapid-reset-mitigations}},
+  year         = {2025},
+  month        = aug,
+  note         = {Published 13 August 2025. Last accessed: 22 November 2026. [Online]. Primary vendor analysis; JCR/JIF: not applicable}
+}
+
+@misc{certccMadeYouReset,
+  author       = {{CERT Coordination Center (CERT/CC)}},
+  title        = {{VU\#767506}: {HTTP/2} {MadeYouReset} Vulnerability Allows Denial of Service},
+  howpublished = {CERT/CC Vulnerability Notes Database. [Online]. \href{https://kb.cert.org/vuls/id/767506}
+                   {https://kb.cert.org/vuls/id/767506}},
+  year         = {2025},
+  month        = aug,
+  note         = {Published 13 August 2025. Last accessed: 22 November 2026. [Online]. Vulnerability note; JCR/JIF: not applicable}
+}
+
+@misc{cve20258671,
+  author       = {{National Vulnerability Database}},
+  title        = {{CVE-2025-8671}: {HTTP/2} {MadeYouReset}},
+  howpublished = {NIST National Vulnerability Database. [Online]. \href{https://nvd.nist.gov/vuln/detail/CVE-2025-8671}
+                   {https://nvd.nist.gov/vuln/detail/CVE-2025-8671}},
+  year         = {2025},
+  note         = {Published 13 August 2025; CVSS 3.1 base score 7.5 (High). Last accessed: 22 November 2026. [Online]. Vulnerability record; JCR/JIF: not applicable}
+}
+
+@misc{cve202548989,
+  author       = {{Apache Software Foundation}},
+  title        = {{CVE-2025-48989}: Apache Tomcat Denial of Service via {MadeYouReset} {HTTP/2}},
+  howpublished = {NIST National Vulnerability Database. [Online]. \href{https://nvd.nist.gov/vuln/detail/CVE-2025-48989}
+                   {https://nvd.nist.gov/vuln/detail/CVE-2025-48989}},
+  year         = {2025},
+  month        = aug,
+  note         = {Published 13 August 2025; Apache Tomcat implementation of the MadeYouReset class. Last accessed: 22 November 2026. [Online]. Vendor advisory; JCR/JIF: not applicable}
+}
+
+@misc{googleRapidReset,
+  author       = {{Google Cloud}},
+  title        = {How It Works: The Novel {HTTP/2} Rapid Reset {DDoS} Attack},
+  howpublished = {Google Cloud Blog. [Online]. \href{https://cloud.google.com/blog/products/identity-security/how-it-works-the-novel-http2-rapid-reset-ddos-attack/}
+                   {https://cloud.google.com/blog/products/identity-security/how-it-works-the-novel-http2-rapid-reset-ddos-attack/}},
+  year         = {2023},
+  month        = oct,
+  note         = {Published 10 October 2023. Last accessed: 22 November 2026. [Online]. Primary vendor disclosure and mitigation guidance; JCR/JIF: not applicable}
+}
+
+@misc{certeu,
+  author       = {{CERT-EU}},
+  title        = {{HTTP/2} Rapid Reset Vulnerability (Security Advisory 2023-074)},
+  howpublished = {CERT-EU Security Advisories. [Online]. \href{https://www.cert.europa.eu/publications/security-advisories/2023-074/}
+                   {https://www.cert.europa.eu/publications/security-advisories/2023-074/}},
+  year         = {2023},
+  month        = oct,
+  note         = {Published October 2023. Last accessed: 22 November 2026. [Online]. Government advisory with mitigation recommendations; JCR/JIF: not applicable}
+}
+
+@misc{imperva,
+  author       = {{Imperva}},
+  title        = {{MadeYouReset}: Turning the {HTTP/2} Server Against Itself},
+  howpublished = {Imperva Blog. [Online]. \href{https://www.imperva.com/blog/madeyoureset-turning-http-2-server-against-itself/}
+                   {https://www.imperva.com/blog/madeyoureset-turning-http-2-server-against-itself/}},
+  year         = {2025},
+  month        = aug,
+  note         = {Published August 2025. Last accessed: 22 November 2026. [Online]. Primary security research write-up; JCR/JIF: not applicable}
+}
+
+@inproceedings{madeyouresetPaper,
+  author    = {Bar Nahum, Gal and Bremler-Barr, Anat and Harel, Yaniv},
+  title     = {{MadeYouReset}: Exploiting {HTTP/2} Server-Side Resets for Large-Scale {DoS}},
+  booktitle = {Proceedings of the IEEE Symposium on Security and Privacy (S\&P)},
+  year      = {2026},
+  note      = {Tel Aviv University. Paper: \href{https://deepness-lab.org/publications/madeyoureset-2/}{deepness-lab.org/publications/madeyoureset-2}. Last accessed: 22 November 2026. Defines the ``Phantom Streams'' phenomenon (protocol-vs-backend state divergence); CVE-2025-8671. Peer-reviewed; top-tier venue}
+}
+
+@inproceedings{yoyo,
+  author    = {Bremler-Barr, Anat and Brosh, Eli and Sides, Mor},
+  title     = {{DDoS} Attack on Cloud Auto-scaling Mechanisms},
+  booktitle = {Proceedings of IEEE INFOCOM},
+  year      = {2017},
+  note      = {The ``Yo-Yo attack'' on cloud elasticity. Last accessed: 22 November 2026. Peer-reviewed}
+}
+
+@inproceedings{tandem,
+  author    = {Bremler-Barr, Anat and Levy, Hanoch and Czeizler, Michael and Tavori, Jhonatan},
+  title     = {Exploiting Miscoordination of Microservices in Tandem for Effective {DDoS} Attacks},
+  booktitle = {Proceedings of IEEE INFOCOM},
+  year      = {2024},
+  note      = {The ``Tandem attack'' on microservice auto-scaling. Last accessed: 22 November 2026. Peer-reviewed}
+}
+
+@article{coda,
+  author  = {Zhan, Mengqi and Li, Yang and Yang, Huiran and Yu, Guangxi and Li, Bo and Wang, Weiping},
+  title   = {{Coda}: Runtime Detection of Application-Layer {CPU}-Exhaustion {DoS} Attacks in Containers},
+  journal = {IEEE Transactions on Services Computing},
+  volume  = {16},
+  number  = {3},
+  pages   = {1686--1697},
+  year    = {2023},
+  note    = {eBPF-based per-connection CPU-time detection in containers. \href{https://doi.org/10.1109/TSC.2022.3194266}{DOI: 10.1109/TSC.2022.3194266}. Last accessed: 22 November 2026. Peer-reviewed}
+}
+
+@inproceedings{finelame,
+  author    = {Demoulin, Henri Maxime and Pedisich, Isaac and Vasilakis, Nikos and Liu, Vincent and Loo, Boon Thau and Phan, Linh Thi Xuan},
+  title     = {Detecting Asymmetric Application-layer Denial-of-Service Attacks In-Flight with {FineLame}},
+  booktitle = {Proceedings of the USENIX Annual Technical Conference (ATC)},
+  year      = {2019},
+  note      = {eBPF-based in-flight detection of asymmetric application-layer DoS. Last accessed: 22 November 2026. Peer-reviewed}
+}
+
+@misc{dockerDocs,
+  author       = {{Docker, Inc.}},
+  title        = {Runtime Options with Memory, {CPUs}, and {GPUs}},
+  howpublished = {Docker Documentation. [Online]. \href{https://docs.docker.com/engine/containers/resource_constraints/}
+                   {https://docs.docker.com/engine/containers/resource_constraints/}},
+  year         = {2026},
+  note         = {Last accessed: 22 November 2026. [Online]. Primary vendor documentation (control-group resource limits); JCR/JIF: not applicable}
+}
+
+@misc{prometheus,
+  author       = {{Prometheus Authors}},
+  title        = {Prometheus: Monitoring System and Time Series Database},
+  howpublished = {Prometheus. [Online]. \href{https://prometheus.io/docs/introduction/overview/}
+                   {https://prometheus.io/docs/introduction/overview/}},
+  year         = {2026},
+  note         = {Last accessed: 22 November 2026. [Online]. Primary project documentation; JCR/JIF: not applicable}
+}

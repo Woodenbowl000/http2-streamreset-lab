@@ -46,6 +46,26 @@ H2_PREFACE = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
 MAX_SCAN_BUFFER = 1_000_000  # safety cap: abandon counting for this connection
                              # rather than buffer unbounded non-HTTP/2 traffic
 
+# --- Experimental: connection-scoped inline mitigation -----------------------
+# OPT-IN (GUARD_INLINE_MITIGATION=true), default OFF so the verified source-IP
+# blocklist path is byte-for-byte unchanged. When enabled, the guard enforces a
+# per-connection RST_STREAM budget itself: a single connection that churns more
+# than GUARD_CONN_RESET_BUDGET resets (either direction) is served a forceful
+# GOAWAY(ENHANCE_YOUR_CALM) and torn down, without a detector round-trip and
+# without any source-IP attribution. This is the per-connection "how useful is
+# this connection" mitigation the Rapid Reset disclosures recommend, and because
+# it acts at connection granularity it also covers MadeYouReset, whose
+# server-side resets cannot be attributed per source behind an L4 proxy.
+INLINE_MITIGATION = os.environ.get("GUARD_INLINE_MITIGATION", "false").lower() == "true"
+CONN_RESET_BUDGET = int(os.environ.get("GUARD_CONN_RESET_BUDGET", "100"))
+# A complete HTTP/2 GOAWAY frame (length 8, type 0x07, flags 0, stream 0),
+# last-stream-id 0, error code 0x0b = ENHANCE_YOUR_CALM.
+GOAWAY_ENHANCE_YOUR_CALM = (
+    b"\x00\x00\x08\x07\x00\x00\x00\x00\x00"
+    b"\x00\x00\x00\x00"
+    b"\x00\x00\x00\x0b"
+)
+
 
 class H2ResetScanner:
     """Incrementally scans a one-directional raw byte stream for HTTP/2
@@ -110,6 +130,7 @@ _stats = {
     "active_connections": 0,
     "bytes_c2s": 0,
     "bytes_s2c": 0,
+    "inline_mitigated_total": 0,   # connections torn down by inline mitigation
 }
 _per_source = {}           # ip -> connection count (lifetime total)
 _active = {}               # ip -> set of (client_writer, victim_writer)
@@ -164,7 +185,8 @@ def _is_blocked(ip: str) -> bool:
         return True
 
 
-async def _pump(reader, writer, counter_key, scanner=None, reset_counts=None, ip=None):
+async def _pump(reader, writer, counter_key, scanner=None, reset_counts=None, ip=None,
+                conn=None, direction=None, client_writer=None, victim_writer=None):
     try:
         while True:
             data = await reader.read(65536)
@@ -177,6 +199,21 @@ async def _pump(reader, writer, counter_key, scanner=None, reset_counts=None, ip
                 _stats[counter_key] += len(data)
                 if n_rst and reset_counts is not None and ip is not None:
                     reset_counts[ip] = reset_counts.get(ip, 0) + n_rst
+            # Experimental inline mitigation: enforce a per-connection reset
+            # budget. Default path (INLINE_MITIGATION false) never enters here.
+            if INLINE_MITIGATION and n_rst and conn is not None and not conn["tripped"]:
+                conn[direction] += n_rst
+                if conn["client_rst"] + conn["server_rst"] >= CONN_RESET_BUDGET:
+                    conn["tripped"] = True
+                    with _lock:
+                        _stats["inline_mitigated_total"] += 1
+                    try:
+                        if client_writer is not None:
+                            client_writer.write(GOAWAY_ENHANCE_YOUR_CALM)
+                            await client_writer.drain()
+                    except Exception:
+                        pass
+                    break
     except Exception:
         pass
     finally:
@@ -184,6 +221,15 @@ async def _pump(reader, writer, counter_key, scanner=None, reset_counts=None, ip
             writer.close()
         except Exception:
             pass
+        # If this connection was tripped, make sure both ends are torn down so
+        # the peer pump unblocks immediately.
+        if conn is not None and conn.get("tripped"):
+            for w in (client_writer, victim_writer):
+                try:
+                    if w is not None:
+                        w.close()
+                except Exception:
+                    pass
 
 
 async def handle_client(client_reader, client_writer):
@@ -214,10 +260,13 @@ async def handle_client(client_reader, client_writer):
         _stats["active_connections"] += 1
     c2v_scanner = H2ResetScanner()
     v2c_scanner = H2ResetScanner()
+    conn = {"client_rst": 0, "server_rst": 0, "tripped": False}
     try:
         await asyncio.gather(
-            _pump(client_reader, victim_writer, "bytes_c2s", c2v_scanner, _client_reset_per_source, ip),
-            _pump(victim_reader, client_writer, "bytes_s2c", v2c_scanner, _server_reset_per_source, ip),
+            _pump(client_reader, victim_writer, "bytes_c2s", c2v_scanner, _client_reset_per_source, ip,
+                  conn=conn, direction="client_rst", client_writer=client_writer, victim_writer=victim_writer),
+            _pump(victim_reader, client_writer, "bytes_s2c", v2c_scanner, _server_reset_per_source, ip,
+                  conn=conn, direction="server_rst", client_writer=client_writer, victim_writer=victim_writer),
         )
     finally:
         _unregister(ip, pair)
@@ -302,6 +351,9 @@ class Control(BaseHTTPRequestHandler):
                 "# HELP guard_bytes_s2c_total server->client bytes",
                 "# TYPE guard_bytes_s2c_total counter",
                 f"guard_bytes_s2c_total {s['bytes_s2c']}",
+                "# HELP guard_inline_mitigated_total connections torn down by inline per-connection mitigation",
+                "# TYPE guard_inline_mitigated_total counter",
+                f"guard_inline_mitigated_total {s['inline_mitigated_total']}",
             ]
             body = ("\n".join(lines) + "\n").encode()
             self.send_response(200)

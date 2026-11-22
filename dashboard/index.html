@@ -28,11 +28,15 @@
   .banner.mkr{background:rgba(210,153,34,.14);border-color:var(--amber)}
   .banner.mkr .dot{background:var(--amber);animation:pulse 1s infinite}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+  .gapnote{background:var(--panel2);border:1px solid var(--amber);border-left:4px solid var(--amber);
+    border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:var(--fg);line-height:1.5}
+  .gapnote b{color:var(--amber)}
   .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px}
   .tile{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
   .tile .label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
   .tile .val{font-size:26px;font-weight:650;margin-top:4px;font-variant-numeric:tabular-nums}
   .tile .unit{font-size:13px;color:var(--muted);font-weight:400}
+  .tile .hint{color:var(--muted);font-size:11px;margin-top:4px}
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
   @media(max-width:760px){.grid2{grid-template-columns:1fr}}
   .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:16px}
@@ -72,11 +76,13 @@
 
 <div class="wrap">
   <div id="banner" class="banner normal"><span class="dot"></span><span id="bannerText">Normal — no attack detected</span></div>
+  <div id="gapNote" class="gapnote" style="display:none"></div>
 
   <div class="tiles">
-    <div class="tile"><div class="label">Client reset rate</div><div class="val"><span id="crr">0</span> <span class="unit">/s</span></div></div>
-    <div class="tile"><div class="label">Mismatch ratio</div><div class="val"><span id="mr">0.0</span></div></div>
-    <div class="tile"><div class="label">Server reset rate</div><div class="val"><span id="srr">0</span> <span class="unit">/s</span></div></div>
+    <div class="tile"><div class="label">Client reset rate</div><div class="val"><span id="crr">0</span> <span class="unit">/s</span></div><div class="hint" id="crrHint">Rapid Reset signal</div></div>
+    <div class="tile"><div class="label">Mismatch ratio</div><div class="val"><span id="mr">0.0</span></div><div class="hint" id="mrHint">MadeYouReset signal</div></div>
+    <div class="tile"><div class="label">Phantom streams</div><div class="val"><span id="ph">0</span></div><div class="hint">backend work, no open stream</div></div>
+    <div class="tile"><div class="label">Server reset rate</div><div class="val"><span id="srr">0</span> <span class="unit">/s</span></div><div class="hint">server-initiated resets</div></div>
     <div class="tile"><div class="label">Mitigation</div><div class="val"><span id="mit" class="pill off">inactive</span></div></div>
   </div>
 
@@ -100,6 +106,21 @@
         <button class="small mkr" onclick="mitigateKind('madeyoureset')">Mitigate MadeYouReset</button>
       </div>
       <div class="action" id="runMR"></div>
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <h2>Server reset rate (who is resetting)</h2>
+      <div class="legend"><span><i style="background:#2f81f7"></i>server resets /s</span></div>
+      <canvas id="chartSR"></canvas>
+      <div class="sub" style="color:var(--muted);margin-top:8px">Rises under MadeYouReset — the server resets its own streams — and stays flat under legitimate load.</div>
+    </div>
+    <div class="card">
+      <h2>Phantom streams (backend work, no open stream)</h2>
+      <div class="legend"><span><i style="background:#a371f7"></i>inflight − open_streams</span></div>
+      <canvas id="chartPH"></canvas>
+      <div class="sub" style="color:var(--muted);margin-top:8px">A direct count of requests still running for streams the protocol has already reset — the phantom work the attack accumulates.</div>
     </div>
   </div>
 
@@ -136,7 +157,7 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const RR = {data:[], thr:50}, MR = {data:[], thr:3};
+const RR = {data:[], thr:50}, MR = {data:[], thr:3}, SR = {data:[]}, PH = {data:[]};
 
 function drawChart(canvas, series, threshold, color){
   const dpr = window.devicePixelRatio || 1;
@@ -157,10 +178,12 @@ function drawChart(canvas, series, threshold, color){
     ctx.beginPath(); ctx.moveTo(pad.l,y); ctx.lineTo(w-pad.r,y); ctx.stroke();
     ctx.fillText(v.toFixed(v<10?1:0), pad.l-5, y);
   }
-  // threshold line
-  const ty = pad.t + ih*(1-threshold/max);
-  ctx.strokeStyle='#8b949e'; ctx.setLineDash([4,4]); ctx.beginPath();
-  ctx.moveTo(pad.l,ty); ctx.lineTo(w-pad.r,ty); ctx.stroke(); ctx.setLineDash([]);
+  // threshold line (only when a threshold is given)
+  if(threshold>0){
+    const ty = pad.t + ih*(1-threshold/max);
+    ctx.strokeStyle='#8b949e'; ctx.setLineDash([4,4]); ctx.beginPath();
+    ctx.moveTo(pad.l,ty); ctx.lineTo(w-pad.r,ty); ctx.stroke(); ctx.setLineDash([]);
+  }
   // series
   const n = series.length;
   if(n>1){
@@ -184,10 +207,15 @@ async function tick(){
   const hist = s.history||[];
   RR.data = hist.map(p=>p.client_reset_rate);
   MR.data = hist.map(p=>p.mismatch_ratio);
+  SR.data = hist.map(p=>p.server_reset_rate);
+  PH.data = hist.map(p=>p.phantom_streams||0);
   RR.thr = s.thresholds.rapid_reset_rate; MR.thr = s.thresholds.mismatch_ratio;
   $('crr').textContent = (s.client_reset_rate||0).toFixed(0);
   $('srr').textContent = (s.server_reset_rate||0).toFixed(0);
   $('mr').textContent = (s.mismatch_ratio||0).toFixed(2);
+  $('ph').textContent = (s.phantom_streams||0).toFixed(0);
+  $('crrHint').textContent = 'Rapid Reset · threshold '+RR.thr+'/s';
+  $('mrHint').textContent = 'MadeYouReset · threshold '+MR.thr;
   $('auto').checked = !!s.auto_mitigate;
   const mitEl = $('mit');
   if(s.mitigation_active){ mitEl.textContent='active'; mitEl.className='pill on'; }
@@ -196,11 +224,20 @@ async function tick(){
   if(s.alert==='RAPID_RESET'){ b.className='banner rapid'; bt.textContent='⚠ RAPID RESET attack detected (CVE-2023-44487)'; }
   else if(s.alert==='MADEYOURESET'){ b.className='banner mkr'; bt.textContent='⚠ MadeYouReset detected (CVE-2025-8671) — backend mismatch'; }
   else { b.className='banner normal'; bt.textContent='Normal — no attack detected'; }
+  const gap = $('gapNote');
+  if(s.alert==='MADEYOURESET'){
+    gap.style.display='block';
+    gap.innerHTML = 'Detection gap: the client sent <b>0</b> resets, yet the backend mismatch ratio is <b>'
+      +(s.mismatch_ratio||0).toFixed(1)+'</b> with <b>'+(s.phantom_streams||0).toFixed(0)
+      +'</b> phantom streams — a server-induced attack that client reset-rate monitoring cannot see.';
+  } else { gap.style.display='none'; }
   $('action').textContent = s.last_action ? ('Last action: '+s.last_action) : '';
   const blocked = Object.keys(s.blocked||{});
   $('blocked').textContent = blocked.length ? ('Blocked sources: '+blocked.join(', ')) : '';
   drawChart($('chartRR'), RR.data, RR.thr, '#f85149');
   drawChart($('chartMR'), MR.data, MR.thr, '#d29922');
+  drawChart($('chartSR'), SR.data, 0, '#2f81f7');
+  drawChart($('chartPH'), PH.data, 0, '#a371f7');
 }
 async function mitigateKind(kind){
   await fetch('/api/mitigate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind})});

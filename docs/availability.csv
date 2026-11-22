@@ -1,0 +1,2 @@
+label,requests,ok,fail,success_rate_pct,latency_ms_p50,latency_ms_p95,latency_ms_mean
+legit,544,544,0,100.0,213.2,239.0,217.6
